@@ -1,73 +1,65 @@
-# Chadwick II — Command Center (前后端分离版)
+# Chadwick II — Command Center 
 
-## 项目结构
+## Project structure
 
 ```
 chadwick-fullstack/
-├── frontend/          ← React 前端 (组员A负责)
+├── frontend/          ← React Frontend 
 │   ├── src/
-│   │   ├── components/    ← 可复用UI组件
-│   │   ├── pages/         ← 页面组件
-│   │   ├── hooks/         ← 自定义Hook（WebSocket等）
-│   │   ├── services/      ← API请求函数
-│   │   └── context/       ← 全局状态（登录用户等）
+│   │   ├── components/    ← Reusable UI components
+│   │   ├── pages/         ← Page components
+│   │   ├── hooks/         ← Custom hooks (WebSocket etc.)
+│   │   ├── services/      ← API request functions
+│   │   └── context/       ← Global state (auth user etc.)
 │   ├── package.json
 │   └── index.html
 │
-├── backend/           ← Python FastAPI 后端 (组员B/C负责)
-│   ├── main.py            ← 程序入口
-│   ├── routers/           ← API路由
-│   │   ├── auth.py        ← 登录/登出
-│   │   ├── robot.py       ← 机器人控制指令
-│   │   ├── session.py     ← 会话管理
-│   │   └── telemetry.py   ← 遥测数据
-│   ├── models/            ← 数据结构定义
-│   ├── services/          ← 业务逻辑
-│   │   ├── robot_bridge.py  ← 连接真实机器人/ROS2
-│   │   └── mock_robot.py    ← 模拟机器人（开发用）
+├── backend/           ← Python FastAPI Backend 
+│   ├── main.py            ← App entry point
+│   ├── routers/           ← API routes
+│   │   ├── auth.py        ← Login / Logout
+│   │   ├── robot.py       ← Robot control commands
+│   │   ├── session.py     ← Session management
+│   │   └── telemetry.py   ← Telemetry data
+│   ├── models/            ← Data structure definitions
+│   ├── services/          ← Business logic
+│   │   ├── robot_bridge.py  ← Real robot / ROS2 connection
+│   │   └── mock_robot.py    ← Simulated robot (for development)
 │   ├── requirements.txt
 │   └── .env
 │
 └── README.md
 ```
 
-## 快速启动
+## fast start
 
-### 后端
+### backend
 ```bash
 cd backend
 pip install -r requirements.txt
 uvicorn main:app --reload --port 8000
 ```
 
-### 前端
+### frontend
 ```bash
 cd frontend
 npm install
-npm run dev        # 访问 http://localhost:5173
+npm run dev        # visit http://localhost:5173
 ```
 
-## 团队分工建议
 
-| 组员 | 负责模块 | 主要文件 |
-|------|----------|----------|
-| 组员A | 前端页面+组件 | frontend/src/pages/, components/ |
-| 组员B | 后端API+登录 | backend/routers/auth.py, session.py |
-| 组员C | 机器人通信 | backend/services/robot_bridge.py, routers/robot.py |
-| 组员D | 遥测+数据库 | backend/routers/telemetry.py, models/ |
+## API Endpoints
 
-## API 接口一览
-
-| 方法 | 路径 | 说明 |
+| method | path | Description |
 |------|------|------|
-| POST | /api/auth/login | 登录 |
-| POST | /api/auth/logout | 登出 |
-| GET  | /api/robot/status | 获取机器人状态 |
-| POST | /api/robot/command | 发送控制指令 |
-| POST | /api/robot/estop | 紧急停止 |
-| GET  | /api/session/current | 当前会话信息 |
-| POST | /api/session/start | 开始会话 |
-| POST | /api/session/stop | 结束会话 |
-| POST | /api/session/tag | 添加事件标签 |
-| GET  | /api/session/{id}/export | 导出日志 |
-| WS   | /ws/telemetry | WebSocket实时遥测 |
+| POST | /api/auth/login | Login |
+| POST | /api/auth/logout | Logout |
+| GET  | /api/robot/status | Get robot status |
+| POST | /api/robot/command | Send control command |
+| POST | /api/robot/estop | Emergency stop |
+| GET  | /api/session/current | Get current session info |
+| POST | /api/session/start | Start session |
+| POST | /api/session/stop | End session |
+| POST | /api/session/tag | Add event tag |
+| GET  | /api/session/{id}/export | Export session log |
+| WS   | /ws/telemetry | WebSocket real-time telemetry |
