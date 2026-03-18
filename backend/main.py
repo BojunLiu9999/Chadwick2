@@ -15,10 +15,10 @@ from config import settings
 async def lifespan(app: FastAPI):
     """启动时初始化数据库"""
     await init_db()
-    print("✅ 数据库初始化完成")
-    print(f"🤖 机器人模式: {settings.ROBOT_MODE}")
+    print("✅ Initiating database completed")
+    print(f"🤖 Robot mode: {settings.ROBOT_MODE}")
     yield
-    print("👋 服务关闭")
+    print("👋 Service close")
 
 
 app = FastAPI(
