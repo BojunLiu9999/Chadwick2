@@ -1,0 +1,17 @@
+# ── 服务器配置 ──
+APP_HOST=0.0.0.0
+APP_PORT=8000
+
+# ── JWT 密钥（上线前请换成随机长字符串）──
+SECRET_KEY=chadwick-dev-secret-key-change-in-production
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=480
+
+# ── 数据库 ──
+DATABASE_URL=sqlite+aiosqlite:///./chadwick.db
+
+# ── 机器人模式：mock = 模拟，real = 真实机器人 ──
+ROBOT_MODE=mock
+
+# ── 前端地址（CORS用）──
+FRONTEND_URL=http://localhost:5173

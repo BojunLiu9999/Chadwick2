@@ -1,0 +1,151 @@
+.page {
+  min-height: 100vh;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+}
+
+.bgGrid {
+  position: fixed; inset: 0; z-index: 0;
+  background-image:
+    linear-gradient(rgba(0,200,255,0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,200,255,0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+  animation: gridMove 20s linear infinite;
+}
+@keyframes gridMove { from { background-position: 0 0; } to { background-position: 40px 40px; } }
+
+.card {
+  position: relative; z-index: 10;
+  width: 420px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 40px;
+  box-shadow: 0 0 60px rgba(0,0,0,0.6), 0 0 30px rgba(0,200,255,0.05);
+  animation: cardIn 0.6s cubic-bezier(0.16,1,0.3,1) both;
+}
+@keyframes cardIn {
+  from { opacity: 0; transform: translateY(24px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.robotIcon {
+  width: 64px; height: 64px; margin: 0 auto 20px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 28px;
+  box-shadow: var(--glow);
+  animation: pulse 3s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%,100% { box-shadow: var(--glow); }
+  50%      { box-shadow: 0 0 30px rgba(0,200,255,0.6); }
+}
+
+.title {
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 22px; font-weight: 700; letter-spacing: 3px;
+  color: var(--accent); text-align: center;
+}
+.subtitle {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; color: var(--dim);
+  text-align: center; letter-spacing: 1px;
+  margin-top: 4px; margin-bottom: 28px;
+}
+
+.roleGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+
+.roleCard {
+  padding: 14px 10px; border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent; color: var(--text);
+  cursor: pointer; text-align: center;
+  transition: all 0.2s;
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.roleCard:hover { border-color: var(--accent); }
+.roleOp { border-color: var(--accent); background: rgba(0,200,255,0.08); box-shadow: var(--glow); }
+.roleSv { border-color: var(--accent2); background: rgba(10,245,160,0.06); box-shadow: var(--glow-green); }
+
+.roleIcon { font-size: 22px; }
+.roleName {
+  font-family: 'Rajdhani', sans-serif; font-size: 13px;
+  font-weight: 600; letter-spacing: 1px;
+}
+.roleOp .roleName { color: var(--accent); }
+.roleSv .roleName { color: var(--accent2); }
+.roleDesc { font-size: 10px; color: var(--dim); }
+
+.field { margin-bottom: 14px; }
+.fieldLabel {
+  display: block;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--dim); margin-bottom: 6px;
+}
+
+.input {
+  width: 100%; padding: 11px 14px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: 'Share Tech Mono', monospace; font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(0,200,255,0.1);
+}
+
+.error {
+  padding: 10px 12px; border-radius: 5px;
+  background: rgba(255,59,59,0.08);
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  text-align: center; margin-bottom: 12px;
+}
+
+.loginBtn {
+  width: 100%; padding: 13px;
+  background: linear-gradient(135deg, rgba(0,200,255,0.15), rgba(0,200,255,0.08));
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  color: var(--accent);
+  font-family: 'Rajdhani', sans-serif;
+  font-size: 15px; font-weight: 700; letter-spacing: 3px;
+  cursor: pointer;
+  box-shadow: var(--glow);
+  transition: all 0.2s;
+}
+.loginBtn:hover:not(:disabled) {
+  background: rgba(0,200,255,0.2);
+  box-shadow: 0 0 30px rgba(0,200,255,0.5);
+}
+.loginBtn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.demoSection {
+  margin-top: 20px; padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.demoTitle {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; color: var(--dim); text-align: center;
+  margin-bottom: 8px; letter-spacing: 1px;
+}
+.demoRow {
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: 'Share Tech Mono', monospace; font-size: 10px;
+  padding: 6px 8px; border-radius: 4px;
+  background: rgba(255,255,255,0.02);
+  cursor: pointer; transition: background 0.15s;
+  margin-bottom: 3px;
+}
+.demoRow:hover { background: rgba(0,200,255,0.05); }
+.demoUser { color: var(--text); }
+.demoPass { color: var(--dim); }
+.demoRole { color: var(--accent); font-size: 9px; }

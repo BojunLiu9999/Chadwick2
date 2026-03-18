@@ -1,0 +1,46 @@
+:root {
+  --bg:      #080c10;
+  --panel:   #0d1117;
+  --border:  #1a2535;
+  --accent:  #00c8ff;
+  --accent2: #0af5a0;
+  --warn:    #ffb800;
+  --danger:  #ff3b3b;
+  --text:    #c8d8e8;
+  --dim:     #4a6070;
+  --glow:    0 0 12px rgba(0,200,255,0.35);
+  --glow-green: 0 0 12px rgba(10,245,160,0.35);
+  --glow-red:   0 0 16px rgba(255,59,59,0.6);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Exo 2', sans-serif;
+  font-size: 13px;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* 扫描线效果 */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(
+    0deg, transparent, transparent 2px,
+    rgba(0,0,0,0.06) 2px, rgba(0,0,0,0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* 通用工具类 */
+.mono { font-family: 'Share Tech Mono', monospace; }
+.rajdhani { font-family: 'Rajdhani', sans-serif; }
