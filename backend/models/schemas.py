@@ -35,6 +35,9 @@ class RobotStatus(BaseModel):
     current_mode: str
     battery_pct: float
     estop_active: bool
+    system_status: Optional[str] = None
+    status_message: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
 
 # ── 遥测数据 ──
