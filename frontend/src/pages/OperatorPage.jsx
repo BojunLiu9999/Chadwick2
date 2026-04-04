@@ -21,6 +21,8 @@ export default function OperatorPage() {
   const [mode, setMode]         = useState('mobility_drills')
   const [safetyConfig, setSafetyConfig] = useState(null)
 
+  const canTeleop = connected && !telemetry?.estop_active && (armed || telemetry?.motion_armed)
+
   // 获取 Supervisor 设置的安全参数（只读展示）
   useEffect(() => {
     robotAPI.getSafetyConfig().then(setSafetyConfig).catch(() => {})
@@ -134,12 +136,18 @@ export default function OperatorPage() {
 
           {/* D-Pad */}
           <SectionLabel>Teleop</SectionLabel>
+          {!canTeleop && (
+            <div style={{ padding: '8px 10px', border: '1px solid rgba(255,184,0,0.3)', borderRadius: 5, marginBottom: 10, color: 'var(--warn)', fontSize: 11 }}>
+              Teleop enabled only when connected, E-Stop cleared, and motion armed.
+            </div>
+          )}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 44px)', gridTemplateRows: 'repeat(3, 44px)', gap: 4, justifyContent: 'center', margin: '10px auto' }}>
             {[null, { cmd: 'MOVE_FWD', label: '↑' }, null,
               { cmd: 'TURN_LEFT', label: '←' }, { cmd: 'STOP', label: 'STOP', center: true }, { cmd: 'TURN_RIGHT', label: '→' },
               null, { cmd: 'MOVE_BACK', label: '↓' }, null
             ].map((btn, i) => btn ? (
               <button key={i}
+                disabled={!canTeleop && btn.cmd !== 'STOP'}
                 onMouseDown={() => sendCmd(btn.cmd)}
                 onMouseUp={() => btn.cmd !== 'STOP' && sendCmd('STOP')}
                 style={{
@@ -149,8 +157,8 @@ export default function OperatorPage() {
                   color: btn.center ? 'var(--accent)' : 'var(--text)',
                   fontSize: btn.center ? 10 : 18,
                   fontFamily: btn.center ? 'Share Tech Mono, monospace' : 'inherit',
-                  cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  transition: 'all 0.1s', letterSpacing: btn.center ? 1 : 0,
+                  cursor: (!canTeleop && btn.cmd !== 'STOP') ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  transition: 'all 0.1s', letterSpacing: btn.center ? 1 : 0, opacity: (!canTeleop && btn.cmd !== 'STOP') ? 0.45 : 1,
                 }}>
                 {btn.label}
               </button>
@@ -160,8 +168,8 @@ export default function OperatorPage() {
           {/* Quick actions */}
           <SectionLabel>Quick Actions</SectionLabel>
           {[['Stand Still', 'STAND_STILL'], ['Home Pose', 'HOME_POSE'], ['Wave Greeting', 'WAVE']].map(([label, cmd]) => (
-            <button key={cmd} onClick={() => sendCmd(cmd)}
-              style={{ width: '100%', padding: 7, borderRadius: 5, marginBottom: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--dim)', fontFamily: 'Exo 2, sans-serif', fontSize: 11, cursor: 'pointer', transition: 'all 0.2s' }}
+            <button key={cmd} onClick={() => sendCmd(cmd)} disabled={!canTeleop && cmd !== 'HOME_POSE'}
+              style={{ width: '100%', padding: 7, borderRadius: 5, marginBottom: 6, border: '1px solid var(--border)', background: 'transparent', color: 'var(--dim)', fontFamily: 'Exo 2, sans-serif', fontSize: 11, cursor: (!canTeleop && cmd !== 'HOME_POSE') ? 'not-allowed' : 'pointer', transition: 'all 0.2s', opacity: (!canTeleop && cmd !== 'HOME_POSE') ? 0.45 : 1 }}
               onMouseEnter={e => { e.target.style.borderColor = 'var(--text)'; e.target.style.color = 'var(--text)' }}
               onMouseLeave={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.color = 'var(--dim)' }}>
               {label}

@@ -135,7 +135,7 @@ export default function SupervisorPage() {
             </div>
           </Panel>
 
-          <TelemetryPanel telemetry={telemetry} />
+          <TelemetryPanel telemetry={telemetry} connected={connected} />
         </div>
       )}
 
