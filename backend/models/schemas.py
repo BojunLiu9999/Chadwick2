@@ -30,6 +30,9 @@ class RobotCommand(BaseModel):
     params: Optional[dict] = None
 
 class RobotStatus(BaseModel):
+    connection: str               # "disconnected" | "connecting" | "connected" | "ready"
+    last_error: Optional[str] = None
+    connected_at: Optional[float] = None
     connected: bool
     motion_armed: bool
     current_mode: str

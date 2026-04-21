@@ -40,6 +40,8 @@ export const authAPI = {
 // ── 机器人控制 ──
 export const robotAPI = {
   getStatus:         ()            => http.get('/robot/status'),
+  connect:           ()            => http.post('/robot/connect'),
+  disconnect:        ()            => http.post('/robot/disconnect'),
   sendCommand:       (command, params) => http.post('/robot/command', { command, params }),
   eStop:             ()            => http.post('/robot/estop'),
   releaseEstop:      ()            => http.post('/robot/estop/release'),

@@ -7,6 +7,7 @@ import React, { useState, useEffect } from 'react'
 import { Header, Panel, SectionLabel, EStop, Toggle, TelemetryPanel } from '../components/SharedComponents'
 import { robotAPI, sessionAPI } from '../services/api'
 import { useTelemetry } from '../hooks/useTelemetry'
+import { useRobotConnection } from '../hooks/useRobotConnection'
 
 const MODES = [
   { key: 'mobility_drills', icon: '🚶', label: 'Mobility\nDrills' },
@@ -16,7 +17,8 @@ const MODES = [
 ]
 
 export default function OperatorPage() {
-  const { telemetry, connected } = useTelemetry()
+  const { telemetry, connected: wsConnected } = useTelemetry()
+  const { connection, lastError, busy, connect, disconnect } = useRobotConnection()
   const [armed, setArmed]       = useState(false)
   const [mode, setMode]         = useState('mobility_drills')
   const [safetyConfig, setSafetyConfig] = useState(null)
@@ -70,8 +72,18 @@ export default function OperatorPage() {
     }
   }
 
+  // 把 connection 映射成胶囊的显示文案和颜色
+  const CONN_DISPLAY = {
+    disconnected: { label: 'DISCONNECTED',  color: 'red'    },
+    connecting:   { label: 'CONNECTING...', color: 'yellow' },
+    connected:    { label: 'CONNECTED',     color: 'yellow' },  // 连上但未 ready
+    ready:        { label: 'ROBOT READY',   color: 'green'  },
+    unknown:      { label: 'STATUS UNKNOWN',color: 'yellow' },
+  }
+  const connPill = CONN_DISPLAY[connection] || CONN_DISPLAY.unknown
+
   const statusPills = [
-    { label: connected ? 'ROBOT CONNECTED' : 'DISCONNECTED', color: connected ? 'green' : 'red' },
+    connPill,
     { label: armed ? 'MOTION ARMED' : 'MOTION DISARMED', color: armed ? 'green' : 'yellow' },
     { label: 'SESSION ACTIVE', color: 'green' },
   ]
@@ -93,6 +105,44 @@ export default function OperatorPage() {
           <div style={{ fontFamily: 'Rajdhani, sans-serif', fontSize: 11, fontWeight: 600, letterSpacing: 2, textTransform: 'uppercase', color: 'var(--dim)', marginBottom: 14, paddingBottom: 8, borderBottom: '1px solid var(--border)' }}>Control</div>
 
           <EStop onTrigger={handleEstop} />
+
+          {/* Robot link */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 12 }}>
+            <span style={{ fontFamily: 'Rajdhani, sans-serif', fontWeight: 600, letterSpacing: 1 }}>ROBOT LINK</span>
+            {(connection === 'ready' || connection === 'connected') ? (
+              <button
+                onClick={async () => {
+                  await disconnect()
+                  TelemetryPanel._addLog?.('[INFO] Robot disconnected', 'info')
+                }}
+                disabled={busy}
+                style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--danger)', background: 'transparent', color: 'var(--danger)', fontFamily: 'Share Tech Mono, monospace', fontSize: 10, cursor: busy ? 'not-allowed' : 'pointer', letterSpacing: 1 }}
+              >
+                DISCONNECT
+              </button>
+            ) : (
+              <button
+                onClick={async () => {
+                  try {
+                    await connect()
+                    TelemetryPanel._addLog?.('[INFO] Robot connected', 'info')
+                  } catch (e) {
+                    TelemetryPanel._addLog?.(`[ERR ] Connect failed: ${lastError || e}`, 'err')
+                  }
+                }}
+                disabled={busy || connection === 'connecting'}
+                style={{ padding: '4px 10px', borderRadius: 4, border: '1px solid var(--accent2)', background: 'transparent', color: 'var(--accent2)', fontFamily: 'Share Tech Mono, monospace', fontSize: 10, cursor: (busy || connection === 'connecting') ? 'not-allowed' : 'pointer', letterSpacing: 1 }}
+              >
+                {connection === 'connecting' ? 'CONNECTING...' : 'CONNECT'}
+              </button>
+            )}
+          </div>
+
+          {/* Motion arm */}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 12 }}>
+            <span style={{ fontFamily: 'Rajdhani, sans-serif', fontWeight: 600, letterSpacing: 1 }}>MOTION ARM</span>
+            <Toggle on={armed} onChange={handleArm} />
+          </div>
 
           {/* Motion arm */}
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 12 }}>
