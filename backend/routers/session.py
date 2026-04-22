@@ -1,15 +1,19 @@
 """
-会话管理路由 — 开始/结束会话、标签、导出
+Session routes for start, pause, stop, tags, and exports.
 """
+import csv
+import io
+import json
+import random
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from datetime import datetime
-import json, csv, io, random
 
-from models.database import get_db, User, Session as RobotSession, LogEntry
-from models.schemas import SessionStartRequest, SessionTagRequest, SessionSummary, LogEntryOut
+from models.database import LogEntry, Session as RobotSession, User, get_db
+from models.schemas import LogEntryOut, SessionStartRequest, SessionTagRequest
 from routers.auth import get_current_user
 from services.mock_robot import mock_robot
 
@@ -20,114 +24,176 @@ def generate_session_id() -> str:
     return f"SES-{random.randint(1000, 9999)}"
 
 
+def encode_detail(data: dict) -> str:
+    return json.dumps(data, ensure_ascii=False)
+
+
+async def get_active_session(db: AsyncSession, operator_id: int) -> RobotSession | None:
+    result = await db.execute(
+        select(RobotSession).where(
+            RobotSession.operator_id == operator_id,
+            RobotSession.is_active == True,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 @router.post("/start")
 async def start_session(
     req: SessionStartRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """开始新的操作会话"""
-    # 关闭旧的活跃会话
-    result = await db.execute(
-        select(RobotSession).where(
-            RobotSession.operator_id == current_user.id,
-            RobotSession.is_active == True
-        )
-    )
-    old = result.scalar_one_or_none()
-    if old:
-        old.is_active = False
-        old.ended_at = datetime.utcnow()
+    now = datetime.utcnow()
+    old_session = await get_active_session(db, current_user.id)
+    if old_session:
+        old_session.is_active = False
+        old_session.ended_at = now
+        db.add(LogEntry(
+            session_id=old_session.session_id,
+            operator=current_user.username,
+            entry_type="INFO",
+            event="SESSION_STOPPED",
+            detail=encode_detail({
+                "reason": "restarted",
+                "ended_at": now.isoformat(),
+            }),
+        ))
 
     session_id = generate_session_id()
     new_session = RobotSession(
         session_id=session_id,
         operator_id=current_user.id,
         mode=req.mode,
+        started_at=now,
+        is_active=True,
     )
     db.add(new_session)
-
-    # 写入日志
     db.add(LogEntry(
         session_id=session_id,
         operator=current_user.username,
         entry_type="INFO",
-        event="SESSION_START",
-        detail=f"Mode: {req.mode}",
+        event="SESSION_STARTED",
+        detail=encode_detail({"mode": req.mode}),
     ))
     await db.commit()
 
     mock_robot.current_session_id = session_id
-    return {"session_id": session_id, "mode": req.mode, "started_at": datetime.utcnow()}
+    return {
+        "success": True,
+        "event_type": "SESSION_STARTED",
+        "session_id": session_id,
+        "mode": req.mode,
+        "message": "Session started",
+        "timestamp": now.isoformat(),
+    }
+
+
+@router.post("/pause")
+async def pause_session(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    session = await get_active_session(db, current_user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="No active session")
+
+    now = datetime.utcnow()
+    db.add(LogEntry(
+        session_id=session.session_id,
+        operator=current_user.username,
+        entry_type="WARN",
+        event="SESSION_PAUSED",
+        detail=encode_detail({"mode": session.mode}),
+    ))
+    await db.commit()
+
+    return {
+        "success": True,
+        "event_type": "SESSION_PAUSED",
+        "session_id": session.session_id,
+        "message": "Session paused",
+        "timestamp": now.isoformat(),
+    }
 
 
 @router.post("/stop")
 async def stop_session(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """结束当前会话"""
-    result = await db.execute(
-        select(RobotSession).where(
-            RobotSession.operator_id == current_user.id,
-            RobotSession.is_active == True
-        )
-    )
-    session = result.scalar_one_or_none()
+    session = await get_active_session(db, current_user.id)
     if not session:
-        raise HTTPException(status_code=404, detail="没有活跃的会话")
+        raise HTTPException(status_code=404, detail="No active session")
 
+    now = datetime.utcnow()
     session.is_active = False
-    session.ended_at = datetime.utcnow()
+    session.ended_at = now
     duration = (session.ended_at - session.started_at).total_seconds()
-
     db.add(LogEntry(
         session_id=session.session_id,
         operator=current_user.username,
         entry_type="INFO",
-        event="SESSION_END",
-        detail=f"Duration: {duration:.0f}s",
+        event="SESSION_STOPPED",
+        detail=encode_detail({
+            "duration_seconds": round(duration, 2),
+            "mode": session.mode,
+        }),
     ))
     await db.commit()
 
     mock_robot.current_session_id = None
-    return {"session_id": session.session_id, "duration_seconds": duration}
+    return {
+        "success": True,
+        "event_type": "SESSION_STOPPED",
+        "session_id": session.session_id,
+        "duration_seconds": duration,
+        "message": "Session stopped",
+        "timestamp": now.isoformat(),
+    }
 
 
 @router.post("/tag")
 async def add_tag(
     req: SessionTagRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """在当前会话中添加事件标签"""
-    session_id = mock_robot.current_session_id or "NO_SESSION"
+    session = await get_active_session(db, current_user.id)
+    if not session:
+        raise HTTPException(status_code=404, detail="No active session")
+
+    now = datetime.utcnow()
     db.add(LogEntry(
-        session_id=session_id,
+        session_id=session.session_id,
         operator=current_user.username,
         entry_type="TAG",
-        event=req.tag,
-        detail=req.note,
+        event="TAG_ADDED",
+        detail=encode_detail({
+            "tag": req.tag,
+            "note": req.note,
+        }),
     ))
     await db.commit()
-    return {"success": True}
+
+    return {
+        "success": True,
+        "event_type": "TAG_ADDED",
+        "session_id": session.session_id,
+        "message": "Tag added",
+        "timestamp": now.isoformat(),
+    }
 
 
 @router.get("/current")
 async def get_current_session(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """获取当前活跃会话信息"""
-    result = await db.execute(
-        select(RobotSession).where(
-            RobotSession.operator_id == current_user.id,
-            RobotSession.is_active == True
-        )
-    )
-    session = result.scalar_one_or_none()
+    session = await get_active_session(db, current_user.id)
     if not session:
         return {"active": False}
+
     return {
         "active": True,
         "session_id": session.session_id,
@@ -138,21 +204,21 @@ async def get_current_session(
 
 @router.get("/logs")
 async def get_session_logs(
-    session_id: str = None,
+    session_id: str | None = None,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """获取会话日志列表"""
     sid = session_id or mock_robot.current_session_id
     if not sid:
         return []
+
     result = await db.execute(
         select(LogEntry)
         .where(LogEntry.session_id == sid)
         .order_by(LogEntry.timestamp.asc())
     )
     entries = result.scalars().all()
-    return [LogEntryOut.model_validate(e) for e in entries]
+    return [LogEntryOut.model_validate(entry) for entry in entries]
 
 
 @router.get("/{session_id}/export")
@@ -160,13 +226,8 @@ async def export_session(
     session_id: str,
     format: str = "csv",
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    """
-    导出会话日志
-    - format=csv  → 下载 CSV 文件
-    - format=json → 下载 JSON 文件
-    """
     result = await db.execute(
         select(LogEntry)
         .where(LogEntry.session_id == session_id)
@@ -177,13 +238,14 @@ async def export_session(
     if format == "json":
         data = [
             {
-                "timestamp": e.timestamp.isoformat(),
-                "operator": e.operator,
-                "type": e.entry_type,
-                "event": e.event,
-                "detail": e.detail,
+                "timestamp": entry.timestamp.isoformat(),
+                "session_id": entry.session_id,
+                "operator": entry.operator,
+                "type": entry.entry_type,
+                "event": entry.event,
+                "detail": entry.detail,
             }
-            for e in entries
+            for entry in entries
         ]
         return StreamingResponse(
             io.BytesIO(json.dumps(data, indent=2, ensure_ascii=False).encode()),
@@ -191,12 +253,18 @@ async def export_session(
             headers={"Content-Disposition": f"attachment; filename={session_id}.json"},
         )
 
-    # 默认 CSV
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Timestamp", "Operator", "Type", "Event", "Detail"])
-    for e in entries:
-        writer.writerow([e.timestamp.isoformat(), e.operator, e.entry_type, e.event, e.detail or ""])
+    writer.writerow(["Timestamp", "Session ID", "Operator", "Type", "Event", "Detail"])
+    for entry in entries:
+        writer.writerow([
+            entry.timestamp.isoformat(),
+            entry.session_id,
+            entry.operator,
+            entry.entry_type,
+            entry.event,
+            entry.detail or "",
+        ])
     output.seek(0)
 
     return StreamingResponse(

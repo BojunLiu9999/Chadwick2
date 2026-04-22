@@ -1,21 +1,17 @@
 """
-Pydantic 数据模型 — 定义API请求和响应的数据格式
+Pydantic schemas for request and response payloads.
 """
-from pydantic import BaseModel
-from typing import Optional, List
 from datetime import datetime
+from typing import List, Optional
+
+from pydantic import BaseModel
 
 
-# ── 认证 ──
 class LoginRequest(BaseModel):
     username: str
     password: str
-    role: str           # "operator" | "supervisor"
+    role: str
 
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    user: "UserInfo"
 
 class UserInfo(BaseModel):
     username: str
@@ -23,14 +19,20 @@ class UserInfo(BaseModel):
     role: str
 
 
-# ── 机器人指令 ──
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: UserInfo
+
+
 class RobotCommand(BaseModel):
-    command: str        # MOVE_FWD / MOVE_BACK / TURN_LEFT / TURN_RIGHT / STOP / HOME_POSE / WAVE
+    command: str
     duration_ms: Optional[int] = None
     params: Optional[dict] = None
 
+
 class RobotStatus(BaseModel):
-    connection: str               # "disconnected" | "connecting" | "connected" | "ready"
+    connection: str
     last_error: Optional[str] = None
     connected_at: Optional[float] = None
     connected: bool
@@ -38,9 +40,11 @@ class RobotStatus(BaseModel):
     current_mode: str
     battery_pct: float
     estop_active: bool
+    system_status: Optional[str] = None
+    status_message: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
 
-# ── 遥测数据 ──
 class TelemetrySnapshot(BaseModel):
     timestamp: datetime
     battery_pct: float
@@ -48,19 +52,25 @@ class TelemetrySnapshot(BaseModel):
     latency_ms: float
     core_temp_c: float
     signal_dbm: float
-    motor_loads: dict    # {"L_HIP": 34, "R_HIP": 36, ...}
+    motor_loads: dict
+    estop_active: Optional[bool] = None
+    motion_armed: Optional[bool] = None
+    current_mode: Optional[str] = None
+    system_status: Optional[str] = None
     pose: Optional[dict] = None
 
 
-# ── 会话 ──
 class SessionStartRequest(BaseModel):
-    mode: str           # "mobility_drills" | "telepresence" | "choreography"
+    mode: str
+
 
 class SessionTagRequest(BaseModel):
     tag: str
     note: Optional[str] = None
 
+
 class LogEntryOut(BaseModel):
+    session_id: str
     timestamp: datetime
     operator: str
     entry_type: str
@@ -69,6 +79,7 @@ class LogEntryOut(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class SessionSummary(BaseModel):
     session_id: str
@@ -82,7 +93,6 @@ class SessionSummary(BaseModel):
     log_entries: List[LogEntryOut]
 
 
-# ── 安全配置 ──
 class SafetyConfigUpdate(BaseModel):
     max_speed: Optional[float] = None
     turn_rate: Optional[float] = None

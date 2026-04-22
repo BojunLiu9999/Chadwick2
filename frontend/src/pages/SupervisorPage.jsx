@@ -4,13 +4,13 @@
  */
 import React, { useState, useEffect } from 'react'
 import { Header, Panel, SectionLabel, EStop, Toggle, TelemetryPanel } from '../components/SharedComponents'
-import { robotAPI, sessionAPI } from '../services/api'
+import { robotAPI } from '../services/api'
 import { useTelemetry } from '../hooks/useTelemetry'
 
 const TABS = ['📊 Overview', '🛡️ Safety Controls', '📋 Audit Log']
 
 export default function SupervisorPage() {
-  const { telemetry, connected } = useTelemetry()
+  const { telemetry, connected, lastError } = useTelemetry()
   const [activeTab, setActiveTab] = useState(0)
   const [safetyConfig, setSafetyConfig] = useState({
     max_speed: 0.4, turn_rate: 30, max_torque_pct: 40,
@@ -135,7 +135,7 @@ export default function SupervisorPage() {
             </div>
           </Panel>
 
-          <TelemetryPanel telemetry={telemetry} />
+          <TelemetryPanel telemetry={telemetry} connected={connected} lastError={lastError} />
         </div>
       )}
 

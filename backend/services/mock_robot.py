@@ -1,69 +1,80 @@
 """
-模拟机器人服务 — 开发阶段使用，不需要真实机器人
-当 ROBOT_MODE=real 时，替换为 robot_bridge.py
-
-负责人：组员C（后续对接真实 ROS2 / Unitree SDK）
+Mock robot service used during development and frontend integration.
 """
-import random, asyncio
+import asyncio
+import random
 from datetime import datetime
 from enum import Enum
 
 
 class ConnectionState(str, Enum):
-    """连接状态机：disconnected → connecting → connected → ready"""
     DISCONNECTED = "disconnected"
-    CONNECTING   = "connecting"
-    CONNECTED    = "connected"
-    READY        = "ready"
+    CONNECTING = "connecting"
+    CONNECTED = "connected"
+    READY = "ready"
 
 
 class MockRobot:
-    """模拟 Unitree G1 机器人，返回假数据用于开发"""
+    """A lightweight Unitree G1 mock."""
 
     def __init__(self):
-        # ── 连接状态（1号成员负责）──
         self.connection: ConnectionState = ConnectionState.DISCONNECTED
         self.last_error: str | None = None
         self.connected_at: float | None = None
-        self._conn_lock = asyncio.Lock()   # 防止并发点"连接"搞乱状态
+        self._conn_lock = asyncio.Lock()
 
-        # ── 安全/运动状态（2号成员负责，别动）──
         self.motion_armed = False
         self.estop_active = False
-
-        # ── 其他 ──
-        self.current_mode = "idle"
+        self.current_mode = "mobility_drills"
         self.current_session_id = None
         self._battery = 72.0
         self._safety_config = {
             "max_speed": 0.4,
             "turn_rate": 30.0,
             "max_torque_pct": 40.0,
+            "temp_warn": 60.0,
+            "temp_stop": 70.0,
+            "active_zone": "LAB G12",
         }
 
-    # ────────────────────────────────────────────
-    # 连接管理（1号成员任务核心）
-    # ────────────────────────────────────────────
     @property
     def is_connected(self) -> bool:
-        """给旧代码用的向后兼容属性（2号成员的逻辑可能在读）"""
         return self.connection in (ConnectionState.CONNECTED, ConnectionState.READY)
 
+    @property
+    def connected(self) -> bool:
+        return self.is_connected
+
+    def _get_system_status(self) -> str:
+        if self.connection == ConnectionState.DISCONNECTED:
+            return "disconnected"
+        if self.connection == ConnectionState.CONNECTING:
+            return "connecting"
+        if self.connection == ConnectionState.READY and self.motion_armed and not self.estop_active:
+            return "ready"
+        return "connected"
+
+    def _get_status_message(self) -> str:
+        if self.connection == ConnectionState.DISCONNECTED:
+            return "Robot disconnected"
+        if self.connection == ConnectionState.CONNECTING:
+            return "Robot connection in progress"
+        if self.estop_active:
+            return "Robot connected, E-Stop active"
+        if self.motion_armed:
+            return "Robot ready for teleoperation"
+        if self.connection == ConnectionState.READY:
+            return "Robot connected, ready for arming"
+        return "Robot connected"
+
     async def connect(self) -> dict:
-        """
-        触发连接流程：disconnected → connecting → connected → ready
-        失败则回到 disconnected 并记录 last_error。
-        """
-        # 第一步：抢锁并切到 connecting
         async with self._conn_lock:
             if self.connection != ConnectionState.DISCONNECTED:
-                raise ValueError(
-                    f"cannot connect from state: {self.connection.value}"
-                )
+                raise ValueError(f"cannot connect from state: {self.connection.value}")
+
             self.connection = ConnectionState.CONNECTING
             self.last_error = None
 
-        # 握手过程不加锁（真实 SDK 会慢，不能卡住 /status）
         try:
             await self._do_handshake()
 
@@ -77,16 +88,15 @@ class MockRobot:
                 self.connection = ConnectionState.READY
 
             return await self.get_status()
-
-        except Exception as e:
+        except Exception as exc:
             async with self._conn_lock:
                 self.connection = ConnectionState.DISCONNECTED
-                self.last_error = str(e)
+                self.last_error = str(exc)
                 self.connected_at = None
+                self.motion_armed = False
             raise
 
     async def disconnect(self) -> dict:
-        """断开连接（幂等：已经断开的话直接返回）"""
         async with self._conn_lock:
             if self.connection == ConnectionState.DISCONNECTED:
                 return await self.get_status()
@@ -98,16 +108,12 @@ class MockRobot:
                 self.connection = ConnectionState.DISCONNECTED
                 self.connected_at = None
                 self.last_error = None
-                # 安全起见：断开时也撤销 arm 状态
                 self.motion_armed = False
+
         return await self.get_status()
 
-    # ── 以下三个是"真实 SDK 接入时"要改的地方 ──
     async def _do_handshake(self):
-        """接真实 Unitree SDK 时，换成 ChannelFactoryInitialize + 订阅 LowState"""
-        await asyncio.sleep(0.8)   # 模拟握手耗时，前端就能看到 connecting
-        # 想测失败分支时取消注释：
-        # raise RuntimeError("handshake timeout")
+        await asyncio.sleep(0.8)
 
     async def _do_post_init(self):
         await asyncio.sleep(0.3)
@@ -115,49 +121,52 @@ class MockRobot:
     async def _do_teardown(self):
         await asyncio.sleep(0.1)
 
-    # ────────────────────────────────────────────
-    # 状态查询
-    # ────────────────────────────────────────────
     async def get_status(self) -> dict:
         return {
-            # 新字段（1号）
-            "connection":   self.connection.value,
-            "last_error":   self.last_error,
+            "connection": self.connection.value,
+            "last_error": self.last_error,
             "connected_at": self.connected_at,
-            # 旧字段（向后兼容，2号和前端现有代码在用）
-            "connected":    self.is_connected,
+            "connected": self.is_connected,
             "motion_armed": self.motion_armed,
             "current_mode": self.current_mode,
-            "battery_pct":  self._battery,
+            "battery_pct": self._battery,
             "estop_active": self.estop_active,
+            "system_status": self._get_system_status(),
+            "status_message": self._get_status_message(),
+            "updated_at": f"{datetime.utcnow().isoformat()}Z",
         }
 
     async def get_telemetry(self) -> dict:
-        """每次调用返回略微随机的遥测数据（模拟传感器噪声）"""
         self._battery = max(0, self._battery - 0.002)
         return {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": f"{datetime.utcnow().isoformat()}Z",
             "battery_pct": round(self._battery, 1),
             "imu_tilt_deg": round(random.uniform(0, 1.5), 2),
             "latency_ms": round(random.uniform(14, 24), 1),
             "core_temp_c": round(random.uniform(52, 56), 1),
             "signal_dbm": round(random.uniform(-65, -58), 1),
             "motor_loads": {
-                "L_HIP":   round(random.uniform(30, 40)),
-                "R_HIP":   round(random.uniform(32, 42)),
-                "L_KNEE":  round(random.uniform(65, 75)),
-                "R_KNEE":  round(random.uniform(40, 50)),
+                "L_HIP": round(random.uniform(30, 40)),
+                "R_HIP": round(random.uniform(32, 42)),
+                "L_KNEE": round(random.uniform(65, 75)),
+                "R_KNEE": round(random.uniform(40, 50)),
                 "L_ANKLE": round(random.uniform(24, 32)),
                 "R_ANKLE": round(random.uniform(26, 34)),
             },
             "estop_active": self.estop_active,
             "motion_armed": self.motion_armed,
+            "current_mode": self.current_mode,
+            "system_status": self._get_system_status(),
         }
 
-    # ────────────────────────────────────────────
-    # 指令执行（加一条：未 ready 不能接指令）
-    # ────────────────────────────────────────────
-    async def execute_command(self, command: str, params: dict = None) -> str:
+    async def execute_command(self, command: str, params: dict | None = None) -> str:
+        if command.startswith("MODE_"):
+            self.current_mode = command.removeprefix("MODE_").lower()
+            await asyncio.sleep(0.02)
+            return f"Mode set to {self.current_mode}"
+
+        if not self.is_connected:
+            return "BLOCKED: robot is disconnected"
         if self.connection != ConnectionState.READY:
             return f"BLOCKED: robot not ready (state: {self.connection.value})"
         if self.estop_active:
@@ -168,18 +177,17 @@ class MockRobot:
         await asyncio.sleep(0.05)
 
         command_map = {
-            "MOVE_FWD":    "Moving forward",
-            "MOVE_BACK":   "Moving backward",
-            "TURN_LEFT":   "Turning left",
-            "TURN_RIGHT":  "Turning right",
-            "STOP":        "Stopped",
-            "HOME_POSE":   "Returning to home pose",
-            "WAVE":        "Waving",
+            "MOVE_FWD": "Moving forward",
+            "MOVE_BACK": "Moving backward",
+            "TURN_LEFT": "Turning left",
+            "TURN_RIGHT": "Turning right",
+            "STOP": "Stopped",
+            "HOME_POSE": "Returning to home pose",
+            "WAVE": "Waving",
             "STAND_STILL": "Standing still",
         }
         return command_map.get(command, f"Unknown command: {command}")
 
-    # ── 以下是 2 号成员的领地，没改 ──
     async def estop(self):
         self.estop_active = True
         self.motion_armed = False
@@ -188,10 +196,10 @@ class MockRobot:
         self.estop_active = False
 
     async def set_armed(self, armed: bool):
+        if armed and self.connection != ConnectionState.READY:
+            raise ValueError("Cannot arm while robot is not ready")
         if self.estop_active and armed:
             raise ValueError("Cannot arm while E-Stop is active")
-        if not self.is_connected and armed:
-            raise ValueError("Cannot arm while robot is disconnected")
         self.motion_armed = armed
 
     async def apply_safety_config(self, config: dict):

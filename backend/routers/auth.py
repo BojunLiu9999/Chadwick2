@@ -1,5 +1,5 @@
 """
-Authentication Route
+认证路由 — 登录 / 登出 / 获取当前用户
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -33,7 +33,7 @@ async def get_current_user(
     """依赖注入：从Token解析当前用户（用于需要登录的接口）"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid credentials, please log in again.",
+        detail="无效的凭据，请重新登录",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
@@ -61,12 +61,14 @@ def require_supervisor(current_user: User = Depends(get_current_user)) -> User:
     return current_user
 
 
-# ── Route ──
+# ── 路由 ──
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
     """
-    user log in
+    用户登录
+    - 验证用户名、密码、角色
+    - 返回 JWT Token
     """
     result = await db.execute(select(User).where(User.username == req.username))
     user = result.scalar_one_or_none()
