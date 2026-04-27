@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import LogEntry, Session as RobotSession, User, get_db
 from models.schemas import LogEntryOut, SessionStartRequest, SessionTagRequest
 from routers.auth import get_current_user
-from services.mock_robot import mock_robot
+from services import robot as mock_robot
 
 router = APIRouter()
 

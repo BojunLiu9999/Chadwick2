@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import LogEntry, User, get_db
 from models.schemas import RobotCommand, RobotStatus, SafetyConfigUpdate
 from routers.auth import get_current_user, require_supervisor
-from services.mock_robot import mock_robot
+from services import robot as mock_robot
 
 router = APIRouter()
 

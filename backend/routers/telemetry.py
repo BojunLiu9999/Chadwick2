@@ -7,7 +7,7 @@ import asyncio, json, random
 from datetime import datetime
 
 from config import settings
-from services.mock_robot import mock_robot
+from services import robot as mock_robot
 
 router = APIRouter()
 
