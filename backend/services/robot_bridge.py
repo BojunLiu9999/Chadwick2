@@ -3,12 +3,11 @@ Real robot bridge using Unitree SDK2 Python.
 
 支持：
   - unitree_mujoco 仿真器（设 ROBOT_IFACE=lo）
-  - 真实 G1 EDU（设 ROBOT_IFACE=eth0 或 enp2s0，机器人 IP 在 192.168.123.x 网段）
+  - G1 EDU（设 ROBOT_IFACE=eth0 或 enp2s0，机器人 IP 在 192.168.123.x 网段）
 
-依赖：
-  pip install unitree-sdk2py  (或从源码 pip install -e .)
-  必须 Python 3.10
-  必须设置 CYCLONEDDS_HOME 环境变量
+  pip install unitree-sdk2py  (pip install -e .)
+  Python 3.10
+  CYCLONEDDS_HOME 
 
 外部接口与 MockRobot 保持一致：
   connect/disconnect, get_status, get_telemetry, execute_command,
@@ -277,7 +276,7 @@ class RealRobotBridge:
 
     def _read_max_temp(self, s) -> float:
         try:
-            temps = [m.temperature for m in s.motor_state[:23]]
+            temps = [m.temperature[0] for m in s.motor_state[:23]]
             return float(max(temps)) if temps else 0.0
         except Exception:
             return 0.0

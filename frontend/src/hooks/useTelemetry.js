@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws/telemetry'
+const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/api/ws/telemetry'
 
 const DEFAULT_TELEMETRY = {
   timestamp: new Date().toISOString(),
