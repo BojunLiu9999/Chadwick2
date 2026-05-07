@@ -41,6 +41,9 @@ export const robotAPI = {
   setArmed: armed => http.post(`/robot/arm?armed=${armed}`),
   getSafetyConfig: () => http.get('/robot/safety-config'),
   updateSafetyConfig: config => http.put('/robot/safety-config', config),
+  playAudio: () => http.post('/robot/audio'),
+  runHighLevel: command => http.post(`/robot/high-level/${command}`),
+  runLoco: command => http.post(`/robot/loco/${command}`),
 }
 
 export const sessionAPI = {

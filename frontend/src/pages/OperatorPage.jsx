@@ -84,11 +84,60 @@ export default function OperatorPage() {
 
   const sendCmd = async command => {
     try {
-      await robotAPI.sendCommand(command)
+      const locoCommands = ['MOVE_FWD', 'MOVE_BACK', 'TURN_LEFT', 'TURN_RIGHT', 'STOP']
+
+      if (locoCommands.includes(command)) {
+        await robotAPI.runLoco(command)
+      } else {
+        await robotAPI.sendCommand(command)
+      }
     } catch (error) {
       console.error(error)
     }
   }
+
+  const handlePlayAudio = async () => {
+    try {
+      const result = await robotAPI.playAudio()
+      console.log('Audio result:', result)
+
+      if (result.success) {
+        window.alert('✅ Audio sent to robot')
+      } else {
+        window.alert('❌ Audio failed')
+      }
+    } catch (error) {
+      console.error(error)
+      window.alert(`❌ Audio failed: ${error}`)
+    }
+  }
+  
+  const handleHighLevelCommand = async command => {
+  try {
+    const locoCommands = ['STOP', 'high stand']
+
+    let result
+
+    if (locoCommands.includes(command)) {
+      result = await robotAPI.runLoco(command)
+    } else {
+      result = await robotAPI.runHighLevel(command)
+    }
+
+    console.log('Command result:', result)
+
+    if (result.success) {
+      window.alert(`✅ ${command} sent`)
+    } else {
+      window.alert(`❌ ${command} failed`)
+    }
+
+  } catch (error) {
+    console.error(error)
+    window.alert(`❌ Command failed: ${error}`)
+  }
+}
+  
 
   const handleEstop = async active => {
     try {
@@ -446,14 +495,14 @@ export default function OperatorPage() {
 
           <SectionLabel>Quick Actions</SectionLabel>
           {[
-            ['Stand Still', 'STAND_STILL'],
-            ['Home Pose', 'HOME_POSE'],
-            ['Wave Greeting', 'WAVE'],
+             ['Stand Still', 'STOP'],
+             ['Home Pose', 'high stand'],
+             ['Wave Greeting', 'high wave'],
           ].map(([label, command]) => (
             <button
               key={command}
-              onClick={() => sendCmd(command)}
-              disabled={command !== 'HOME_POSE' && !canTeleop}
+              onClick={() => handleHighLevelCommand(command)}
+              disabled={!canTeleop}
               style={{
                 width: '100%',
                 padding: 7,
@@ -464,12 +513,12 @@ export default function OperatorPage() {
                 color: 'var(--dim)',
                 fontFamily: 'Exo 2, sans-serif',
                 fontSize: 11,
-                cursor: command !== 'HOME_POSE' && !canTeleop ? 'not-allowed' : 'pointer',
+                cursor: !canTeleop ? 'not-allowed' : 'pointer',
                 transition: 'all 0.2s',
-                opacity: command !== 'HOME_POSE' && !canTeleop ? 0.4 : 1,
+                opacity: !canTeleop ? 0.4 : 1,
               }}
               onMouseEnter={event => {
-                if (command !== 'HOME_POSE' && !canTeleop) {
+                if (!canTeleop) {
                   return
                 }
                 event.target.style.borderColor = 'var(--text)'
@@ -483,6 +532,116 @@ export default function OperatorPage() {
               {label}
             </button>
           ))}
+
+          <button
+            onClick={handlePlayAudio}
+            style={{
+              width: '100%',
+              padding: 7,
+              borderRadius: 5,
+              marginBottom: 6,
+              border: '1px solid var(--accent)',
+              background: 'transparent',
+              color: 'var(--accent)',
+              fontFamily: 'Exo 2, sans-serif',
+              fontSize: 11,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
+            }}
+          >
+            ▶️ Play Audio
+          </button>
+         <button
+  onClick={() => handleHighLevelCommand('shake hand')}
+  style={{
+    width: '100%',
+    padding: 7,
+    borderRadius: 5,
+    marginBottom: 6,
+    border: '1px solid var(--accent)',
+    background: 'transparent',
+    color: 'var(--accent)',
+    fontFamily: 'Exo 2, sans-serif',
+    fontSize: 11,
+    cursor: 'pointer',
+  }}
+>
+  🤝 Shake Hand
+</button>
+
+<button
+  onClick={() => handleHighLevelCommand('high wave')}
+  style={{
+    width: '100%',
+    padding: 7,
+    borderRadius: 5,
+    marginBottom: 6,
+    border: '1px solid var(--accent)',
+    background: 'transparent',
+    color: 'var(--accent)',
+    fontFamily: 'Exo 2, sans-serif',
+    fontSize: 11,
+    cursor: 'pointer',
+  }}
+>
+  👋 Wave Hand
+</button>
+
+<button
+  onClick={() => handleHighLevelCommand('clap')}
+  style={{
+    width: '100%',
+    padding: 7,
+    borderRadius: 5,
+    marginBottom: 6,
+    border: '1px solid var(--accent)',
+    background: 'transparent',
+    color: 'var(--accent)',
+    fontFamily: 'Exo 2, sans-serif',
+    fontSize: 11,
+    cursor: 'pointer',
+  }}
+>
+  👏 Clap
+</button>
+
+<button
+  onClick={() => handleHighLevelCommand('high five')}
+  style={{
+    width: '100%',
+    padding: 7,
+    borderRadius: 5,
+    marginBottom: 6,
+    border: '1px solid var(--accent)',
+    background: 'transparent',
+    color: 'var(--accent)',
+    fontFamily: 'Exo 2, sans-serif',
+    fontSize: 11,
+    cursor: 'pointer',
+  }}
+>
+  ✋ High Five
+</button>
+
+<button
+  onClick={() => handleHighLevelCommand('hands up')}
+  style={{
+    width: '100%',
+    padding: 7,
+    borderRadius: 5,
+    marginBottom: 6,
+    border: '1px solid var(--accent)',
+    background: 'transparent',
+    color: 'var(--accent)',
+    fontFamily: 'Exo 2, sans-serif',
+    fontSize: 11,
+    cursor: 'pointer',
+  }}
+>
+  🙌 Hands Up
+</button>
+          
+          
         </Panel>
 
         <Panel title="Camera & Sensing" style={{ display: 'flex', flexDirection: 'column' }}>

@@ -207,3 +207,42 @@ class MockRobot:
 
 
 mock_robot = MockRobot()
+
+
+current_session_id = None
+
+
+async def connect():
+    return await mock_robot.connect()
+
+
+async def disconnect():
+    return await mock_robot.disconnect()
+
+
+async def get_status():
+    return await mock_robot.get_status()
+
+
+async def get_telemetry():
+    return await mock_robot.get_telemetry()
+
+
+async def execute_command(command: str, params: dict | None = None):
+    return await mock_robot.execute_command(command, params)
+
+
+async def estop():
+    return await mock_robot.estop()
+
+
+async def release_estop():
+    return await mock_robot.release_estop()
+
+
+async def set_armed(armed: bool):
+    return await mock_robot.set_armed(armed)
+
+
+async def apply_safety_config(config: dict):
+    return await mock_robot.apply_safety_config(config)

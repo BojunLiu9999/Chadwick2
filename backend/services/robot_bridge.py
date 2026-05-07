@@ -323,8 +323,8 @@ class RealRobotBridge:
         v = float(self._safety_config.get("max_speed", 0.3))
         w = float(self._safety_config.get("turn_rate", 30.0)) * 0.0174533  # deg/s → rad/s
 
-        if   command == "MOVE_FWD":     c.Move(v, 0, 0)
-        elif command == "MOVE_BACK":    c.Move(-v, 0, 0)
+        if   command == "MOVE_FWD":     sport_client.Move(0.3, 0, 0)
+        elif command == "MOVE_BACK":    sport_client.Move(-0.3, 0, 0)
         elif command == "TURN_LEFT":    c.Move(0, 0, w)
         elif command == "TURN_RIGHT":   c.Move(0, 0, -w)
         elif command == "STOP":         c.Move(0, 0, 0)

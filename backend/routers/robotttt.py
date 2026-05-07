@@ -1,9 +1,7 @@
 """
 Robot control routes.
 """
-import subprocess
 import json
-import os
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import LogEntry, User, get_db
 from models.schemas import RobotCommand, RobotStatus, SafetyConfigUpdate
 from routers.auth import get_current_user, require_supervisor
-from services import mock_robot
+from services import robot as mock_robot
 
 router = APIRouter()
 
@@ -92,31 +90,7 @@ async def send_command(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    loco_commands = {"MOVE_FWD", "MOVE_BACK", "TURN_LEFT", "TURN_RIGHT", "MOVE_LEFT", "MOVE_RIGHT", "STOP"}
-
-    if cmd.command in loco_commands:
-        result = subprocess.run(
-            [
-                "python3",
-                "/home/capstone-cs47-3/chadwick2/backend/robot_commands/run_loco_command.py",
-                "eno3",
-                cmd.command
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        if result.returncode != 0:
-            raise HTTPException(status_code=400, detail=result.stderr or result.stdout)
-
-        command_result = {
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "returncode": result.returncode,
-        }
-    else:
-        command_result = await mock_robot.execute_command(cmd.command, cmd.params)
+    result = await mock_robot.execute_command(cmd.command, cmd.params)
 
     db.add(LogEntry(
         session_id=mock_robot.current_session_id or "NO_SESSION",
@@ -127,7 +101,7 @@ async def send_command(
     ))
     await db.commit()
 
-    return {"success": True, "result": command_result}
+    return {"success": True, "result": result}
 
 
 @router.post("/estop")
@@ -274,106 +248,3 @@ async def get_safety_config(
             "active_zone": "LAB G12",
         }
     return config
-    
-@router.post("/audio")
-def run_audio_command():
-    try:
-        result = subprocess.run(
-            [
-                "python3",
-                "/home/capstone-cs47-3/chadwick2/backend/audio/g1_audio_client_play_wav.py",
-                "eno3",
-                "/home/capstone-cs47-3/chadwick2/backend/audio/test.wav"
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15,
-            env={
-                **os.environ,
-                "PYTHONPATH": "/home/capstone-cs47-3/unitree_sdk2_python"
-            }
-        )
-
-        return {
-            "success": result.returncode == 0,
-            "returncode": result.returncode,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
-        
-@router.post("/high-level/{command}")
-def run_high_level_command(command: str):
-    try:
-        result = subprocess.run(
-            [
-                "python3",
-                "/home/capstone-cs47-3/chadwick2/backend/robot_commands/run_arm_action.py",
-                "eno3",
-                command
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15
-        )
-
-        return {
-            "success": result.returncode == 0,
-            "command": command,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }      
-@router.post("/loco/{command}")
-def run_locomotion_command(command: str):
-    allowed_commands = {
-        "MOVE_FWD",
-        "MOVE_BACK",
-        "TURN_LEFT",
-        "TURN_RIGHT",
-        "MOVE_LEFT",
-        "MOVE_RIGHT",
-        "STOP",
-    }
-
-    if command not in allowed_commands:
-        return {
-            "success": False,
-            "error": "Locomotion command not allowed"
-        }
-
-    try:
-        result = subprocess.run(
-            [
-                "python3",
-                "/home/capstone-cs47-3/chadwick2/backend/robot_commands/run_loco_command.py",
-                "eno3",
-                command
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-
-        return {
-            "success": result.returncode == 0,
-            "command": command,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
