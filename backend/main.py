@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from models.database import init_db
-from routers import auth, robot, session, telemetry
+from routers import auth, camera, robot, session, telemetry
 
 
 @asynccontextmanager
@@ -36,6 +36,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
 app.include_router(robot.router, prefix="/api/robot", tags=["Robot Control"])
 app.include_router(session.router, prefix="/api/session", tags=["Session Management"])
 app.include_router(telemetry.router, prefix="/api", tags=["Telemetry"])

@@ -3,11 +3,12 @@ Real robot bridge using Unitree SDK2 Python.
 
 支持：
   - unitree_mujoco 仿真器（设 ROBOT_IFACE=lo）
-  - G1 EDU（设 ROBOT_IFACE=eth0 或 enp2s0，机器人 IP 在 192.168.123.x 网段）
+  - 真实 G1 EDU（设 ROBOT_IFACE=eth0 或 enp2s0，机器人 IP 在 192.168.123.x 网段）
 
-  pip install unitree-sdk2py  (pip install -e .)
-  Python 3.10
-  CYCLONEDDS_HOME 
+依赖：
+  pip install unitree-sdk2py  (或从源码 pip install -e .)
+  必须 Python 3.10
+  必须设置 CYCLONEDDS_HOME 环境变量
 
 外部接口与 MockRobot 保持一致：
   connect/disconnect, get_status, get_telemetry, execute_command,
@@ -30,28 +31,28 @@ class ConnectionState(str, Enum):
 
 
 class RealRobotBridge:
-    """真实 G1 / 仿真器桥接层。接口与 MockRobot 一致。"""
+    
 
     def __init__(self):
-        # ── 连接状态 ──
+        
         self.connection: ConnectionState = ConnectionState.DISCONNECTED
         self.last_error: str | None = None
         self.connected_at: float | None = None
         self._conn_lock = asyncio.Lock()
 
-        # ── 安全/运动状态 ──
+        
         self.motion_armed = False
         self.estop_active = False
         self.current_mode = "mobility_drills"
         self.current_session_id = None
 
-        # ── SDK 相关（懒加载，避免 import 时崩） ──
+        
         self._loco_client = None
-        self._low_state = None         # 最新一帧 LowState_
+        self._low_state = None         
         self._state_lock = threading.Lock()
-        self._sub = None               # LowState 订阅
+        self._sub = None               
 
-        # ── 安全参数（前端展示用，SDK 没有对应 API） ──
+        
         self._safety_config = {
             "max_speed": 0.4,
             "turn_rate": 30.0,
@@ -61,7 +62,7 @@ class RealRobotBridge:
             "active_zone": "LAB G12",
         }
 
-    # ───────────── 兼容属性 ─────────────
+    
     @property
     def is_connected(self) -> bool:
         return self.connection in (ConnectionState.CONNECTED, ConnectionState.READY)
@@ -158,7 +159,22 @@ class RealRobotBridge:
         from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient
 
         # G1 用的是 unitree_hg IDL（不是 unitree_go），别搞错
-        ChannelFactoryInitialize(settings.ROBOT_DOMAIN_ID, settings.ROBOT_IFACE)
+        # Disconnect → Reconnect within the same backend process: the SDK's
+        # ChannelFactoryInitialize is effectively a module-level singleton —
+        # calling it twice raises. Tolerate that one case and reuse the
+        # existing factory; any other failure still bubbles up. See audit
+        # for the known Disconnect → Reconnect issue.
+        try:
+            ChannelFactoryInitialize(settings.ROBOT_DOMAIN_ID, settings.ROBOT_IFACE)
+        except Exception as e:
+            if "already" in str(e).lower():
+                import sys
+                print(
+                    f"[real_robot] ChannelFactory already initialized, reusing: {e}",
+                    file=sys.stderr,
+                )
+            else:
+                raise
 
         # 订阅 LowState（包含 IMU、电机、电池等）
         self._sub = ChannelSubscriber("rt/lowstate", LowState_)
@@ -276,7 +292,7 @@ class RealRobotBridge:
 
     def _read_max_temp(self, s) -> float:
         try:
-            temps = [m.temperature[0] for m in s.motor_state[:23]]
+            temps = [m.temperature for m in s.motor_state[:23]]
             return float(max(temps)) if temps else 0.0
         except Exception:
             return 0.0
@@ -323,8 +339,8 @@ class RealRobotBridge:
         v = float(self._safety_config.get("max_speed", 0.3))
         w = float(self._safety_config.get("turn_rate", 30.0)) * 0.0174533  # deg/s → rad/s
 
-        if   command == "MOVE_FWD":     sport_client.Move(0.3, 0, 0)
-        elif command == "MOVE_BACK":    sport_client.Move(-0.3, 0, 0)
+        if   command == "MOVE_FWD":     c.Move(v, 0, 0)
+        elif command == "MOVE_BACK":    c.Move(-v, 0, 0)
         elif command == "TURN_LEFT":    c.Move(0, 0, w)
         elif command == "TURN_RIGHT":   c.Move(0, 0, -w)
         elif command == "STOP":         c.Move(0, 0, 0)

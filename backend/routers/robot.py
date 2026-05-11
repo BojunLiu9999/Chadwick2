@@ -5,16 +5,60 @@ import subprocess
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import settings
 from models.database import LogEntry, User, get_db
 from models.schemas import RobotCommand, RobotStatus, SafetyConfigUpdate
 from routers.auth import get_current_user, require_supervisor
-from services import mock_robot
+from services import robot as mock_robot
 
 router = APIRouter()
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+ROBOT_COMMANDS_DIR = BACKEND_ROOT / "robot_commands"
+AUDIO_DIR = BACKEND_ROOT / "audio"
+
+
+def resolve_robot_env() -> dict:
+    env = os.environ.copy()
+    configured_pythonpath = (settings.ROBOT_SDK_PYTHONPATH or settings.CAMERA_PYTHONPATH or "").strip()
+
+    if configured_pythonpath:
+        existing_pythonpath = env.get("PYTHONPATH", "").strip()
+        env["PYTHONPATH"] = (
+            configured_pythonpath
+            if not existing_pythonpath
+            else f"{configured_pythonpath}{os.pathsep}{existing_pythonpath}"
+        )
+
+    return env
+
+
+def resolve_robot_python_bin() -> str:
+    return (settings.ROBOT_PYTHON_BIN or "python3").strip()
+
+
+def resolve_robot_iface() -> str:
+    return (settings.ROBOT_IFACE or "eth0").strip()
+
+
+def resolve_audio_wav_path() -> str:
+    configured = (settings.ROBOT_AUDIO_WAV or "").strip()
+    return configured or str(AUDIO_DIR / "test.wav")
+
+
+def run_robot_script(script_path: Path, *args: str, timeout: int = 10):
+    return subprocess.run(
+        [resolve_robot_python_bin(), str(script_path), resolve_robot_iface(), *args],
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        cwd=str(BACKEND_ROOT),
+        env=resolve_robot_env(),
+    )
 
 
 def encode_detail(data: dict | None) -> str | None:
@@ -95,16 +139,10 @@ async def send_command(
     loco_commands = {"MOVE_FWD", "MOVE_BACK", "TURN_LEFT", "TURN_RIGHT", "MOVE_LEFT", "MOVE_RIGHT", "STOP"}
 
     if cmd.command in loco_commands:
-        result = subprocess.run(
-            [
-                "python3",
-                "/home/capstone-cs47-3/chadwick2/backend/robot_commands/run_loco_command.py",
-                "eno3",
-                cmd.command
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10
+        result = run_robot_script(
+            ROBOT_COMMANDS_DIR / "run_loco_command.py",
+            cmd.command,
+            timeout=10,
         )
 
         if result.returncode != 0:
@@ -280,18 +318,16 @@ def run_audio_command():
     try:
         result = subprocess.run(
             [
-                "python3",
-                "/home/capstone-cs47-3/chadwick2/backend/audio/g1_audio_client_play_wav.py",
-                "eno3",
-                "/home/capstone-cs47-3/chadwick2/backend/audio/test.wav"
+                resolve_robot_python_bin(),
+                str(AUDIO_DIR / "g1_audio_client_play_wav.py"),
+                resolve_robot_iface(),
+                resolve_audio_wav_path(),
             ],
             capture_output=True,
             text=True,
             timeout=15,
-            env={
-                **os.environ,
-                "PYTHONPATH": "/home/capstone-cs47-3/unitree_sdk2_python"
-            }
+            cwd=str(BACKEND_ROOT),
+            env=resolve_robot_env(),
         )
 
         return {
@@ -308,34 +344,71 @@ def run_audio_command():
         }
         
 @router.post("/high-level/{command}")
-def run_high_level_command(command: str):
+async def run_high_level_command(
+    command: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     try:
-        result = subprocess.run(
-            [
-                "python3",
-                "/home/capstone-cs47-3/chadwick2/backend/robot_commands/run_arm_action.py",
-                "eno3",
-                command
-            ],
-            capture_output=True,
-            text=True,
-            timeout=15
+        result = run_robot_script(
+            ROBOT_COMMANDS_DIR / "run_arm_action.py",
+            command,
+            timeout=15,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if result.returncode != 0:
+        try:
+            db.add(LogEntry(
+                session_id=mock_robot.current_session_id or "NO_SESSION",
+                operator=current_user.username,
+                entry_type="ERR",
+                event=command.upper(),
+                detail=encode_detail({
+                    "command": command,
+                    "returncode": result.returncode,
+                    "stderr": result.stderr[:500] if result.stderr else None,
+                }),
+            ))
+            await db.commit()
+        except Exception as e:
+            import sys
+            print(f"[audit log failed] {e}", file=sys.stderr)
+        raise HTTPException(
+            status_code=400,
+            detail=(result.stderr or result.stdout or f"High-level command failed: {command}").strip(),
         )
 
-        return {
-            "success": result.returncode == 0,
-            "command": command,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-
+    try:
+        db.add(LogEntry(
+            session_id=mock_robot.current_session_id or "NO_SESSION",
+            operator=current_user.username,
+            entry_type="CMD",
+            event=command.upper(),
+            detail=encode_detail({
+                "command": command,
+                "returncode": result.returncode,
+                "stderr": result.stderr[:500] if result.stderr else None,
+            }),
+        ))
+        await db.commit()
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }      
+        import sys
+        print(f"[audit log failed] {e}", file=sys.stderr)
+
+    return {
+        "success": True,
+        "command": command,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
 @router.post("/loco/{command}")
-def run_locomotion_command(command: str):
+async def run_locomotion_command(
+    command: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     allowed_commands = {
         "MOVE_FWD",
         "MOVE_BACK",
@@ -353,27 +426,56 @@ def run_locomotion_command(command: str):
         }
 
     try:
-        result = subprocess.run(
-            [
-                "python3",
-                "/home/capstone-cs47-3/chadwick2/backend/robot_commands/run_loco_command.py",
-                "eno3",
-                command
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5
+        result = run_robot_script(
+            ROBOT_COMMANDS_DIR / "run_loco_command.py",
+            command,
+            timeout=10,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+    if result.returncode != 0:
+        try:
+            db.add(LogEntry(
+                session_id=mock_robot.current_session_id or "NO_SESSION",
+                operator=current_user.username,
+                entry_type="ERR",
+                event=command.upper(),
+                detail=encode_detail({
+                    "command": command,
+                    "returncode": result.returncode,
+                    "stderr": result.stderr[:500] if result.stderr else None,
+                }),
+            ))
+            await db.commit()
+        except Exception as e:
+            import sys
+            print(f"[audit log failed] {e}", file=sys.stderr)
+        raise HTTPException(
+            status_code=400,
+            detail=(result.stderr or result.stdout or f"Locomotion command failed: {command}").strip(),
         )
 
-        return {
-            "success": result.returncode == 0,
-            "command": command,
-            "stdout": result.stdout,
-            "stderr": result.stderr
-        }
-
+    try:
+        db.add(LogEntry(
+            session_id=mock_robot.current_session_id or "NO_SESSION",
+            operator=current_user.username,
+            entry_type="CMD",
+            event=command.upper(),
+            detail=encode_detail({
+                "command": command,
+                "returncode": result.returncode,
+                "stderr": result.stderr[:500] if result.stderr else None,
+            }),
+        ))
+        await db.commit()
     except Exception as e:
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        import sys
+        print(f"[audit log failed] {e}", file=sys.stderr)
+
+    return {
+        "success": True,
+        "command": command,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }

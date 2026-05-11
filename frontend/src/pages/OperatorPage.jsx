@@ -81,6 +81,8 @@ export default function OperatorPage() {
       }
     } catch (error) {
       console.error(error)
+      const message = typeof error === 'string' ? error : error?.message || 'Command failed'
+      window.alert(`❌ ${command} failed: ${message}`)
     }
   }
 
@@ -441,8 +443,7 @@ export default function OperatorPage() {
               button ? (
                 <button
                   key={index}
-                  onMouseDown={() => sendCmd(button.cmd)}
-                  onMouseUp={() => button.cmd !== 'STOP' && sendCmd('STOP')}
+                  onClick={() => sendCmd(button.cmd)}
                   disabled={button.cmd !== 'STOP' && !canTeleop}
                   style={{
                     background: button.center ? 'rgba(0,200,255,0.08)' : 'var(--border)',

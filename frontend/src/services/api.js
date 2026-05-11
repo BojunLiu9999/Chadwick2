@@ -46,6 +46,11 @@ export const robotAPI = {
   runLoco: command => http.post(`/robot/loco/${command}`),
 }
 
+export const cameraAPI = {
+  getStatus: () => http.get('/camera/status'),
+  getFrame: () => http.get('/camera/frame.jpg', { responseType: 'blob' }),
+}
+
 export const sessionAPI = {
   start: mode => http.post('/session/start', { mode }),
   pause: () => http.post('/session/pause'),

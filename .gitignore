@@ -15,3 +15,32 @@ backend/.env
 # OS junk
 .DS_Store
 Thumbs.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+
+# Environment files (keep examples but not actual config)
+.env
+backend/.env
+backend/env
+
+# Local SQLite database
+*.db
+backend/chadwick.db
+
+# Frontend build output
+frontend/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp

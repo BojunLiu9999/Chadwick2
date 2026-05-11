@@ -210,7 +210,14 @@ async def get_session_logs(
 ):
     sid = session_id or mock_robot.current_session_id
     if not sid:
-        return []
+        result = await db.execute(
+            select(LogEntry)
+            .where(LogEntry.session_id == "NO_SESSION")
+            .order_by(LogEntry.timestamp.desc())
+            .limit(50)
+        )
+        entries = list(reversed(result.scalars().all()))
+        return [LogEntryOut.model_validate(entry) for entry in entries]
 
     result = await db.execute(
         select(LogEntry)

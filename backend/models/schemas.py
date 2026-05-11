@@ -45,6 +45,17 @@ class RobotStatus(BaseModel):
     updated_at: Optional[datetime] = None
 
 
+class CameraStatus(BaseModel):
+    enabled: bool
+    connected: bool
+    mode: str
+    label: str
+    resolution: str
+    fps: int
+    stream_url: Optional[str] = None
+    status_message: str
+
+
 class TelemetrySnapshot(BaseModel):
     timestamp: datetime
     battery_pct: float

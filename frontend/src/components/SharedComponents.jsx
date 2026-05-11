@@ -2,6 +2,7 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 
 import { useAuth } from '../context/AuthContext'
+import { useCameraFeed } from '../hooks/useCameraFeed'
 import { formatLogTime } from '../utils/sessionLogs'
 
 const ALERT_RULES = {
@@ -422,6 +423,206 @@ export function Toggle({ on, onChange, disabled = false }) {
           transition: 'left 0.3s',
         }}
       />
+    </div>
+  )
+}
+
+export function CameraFeed({
+  latencyMs = 18,
+  zone = 'LAB G12',
+  accentColor = 'var(--accent)',
+}) {
+  const { camera, mediaStream, frameUrl, loading, error, refresh } = useCameraFeed()
+  const videoRef = React.useRef(null)
+  const [renderError, setRenderError] = React.useState('')
+
+  React.useEffect(() => {
+    if (!videoRef.current || !mediaStream) {
+      return
+    }
+
+    videoRef.current.srcObject = mediaStream
+  }, [mediaStream])
+
+  React.useEffect(() => {
+    setRenderError('')
+  }, [camera.mode, camera.stream_url, mediaStream])
+
+  const isBrowserCamera = camera.mode === 'browser'
+  const isSnapshotFeed = camera.mode === 'unitree_sdk'
+  const isVideoStream = camera.mode === 'video'
+  const hasVisualFeed = Boolean(mediaStream) || Boolean(frameUrl) || Boolean(camera.stream_url)
+  const isLive = !loading && !error && !renderError && hasVisualFeed
+  const statusText = loading ? 'CONNECTING' : isLive ? 'LIVE' : 'OFFLINE'
+  const statusColor = loading ? 'var(--warn)' : isLive ? 'var(--accent2)' : 'var(--danger)'
+  const feedMessage = error || renderError || camera.status_message || 'Camera source unavailable'
+
+  return (
+    <div
+      style={{
+        flex: 1,
+        minHeight: 200,
+        background: '#000',
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        position: 'relative',
+        overflow: 'hidden',
+        marginBottom: 8,
+      }}
+    >
+      {isBrowserCamera && mediaStream ? (
+        <video
+          ref={videoRef}
+          autoPlay
+          muted
+          playsInline
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ) : null}
+
+      {isSnapshotFeed && frameUrl ? (
+        <img
+          src={frameUrl}
+          alt={camera.label}
+          onError={() => setRenderError('Camera frame could not be decoded')}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ) : null}
+
+      {!isBrowserCamera && !isSnapshotFeed && camera.stream_url && isVideoStream ? (
+        <video
+          autoPlay
+          muted
+          playsInline
+          src={camera.stream_url}
+          onError={() => setRenderError('Video stream could not be opened')}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ) : null}
+
+      {!isBrowserCamera && !isSnapshotFeed && camera.stream_url && !isVideoStream ? (
+        <img
+          src={camera.stream_url}
+          alt={camera.label}
+          onError={() => setRenderError('Image stream could not be opened')}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+        />
+      ) : null}
+
+      {!isLive && (
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexDirection: 'column',
+            gap: 10,
+            background: 'linear-gradient(180deg, rgba(0,0,0,0.58), rgba(0,0,0,0.84))',
+            padding: 24,
+            textAlign: 'center',
+          }}
+        >
+          <div
+            style={{
+              width: 60,
+              height: 60,
+              border: `1px solid ${accentColor}`,
+              borderRadius: '50%',
+              position: 'relative',
+              opacity: 0.55,
+            }}
+          >
+            <div style={{ position: 'absolute', width: 1, height: '100%', left: '50%', background: accentColor, opacity: 0.55 }} />
+            <div style={{ position: 'absolute', height: 1, width: '100%', top: '50%', background: accentColor, opacity: 0.55 }} />
+          </div>
+          <div style={{ fontFamily: 'Share Tech Mono, monospace', fontSize: 11, color: 'var(--dim)', lineHeight: 1.5 }}>
+            {feedMessage}
+          </div>
+          <button
+            onClick={refresh}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 4,
+              border: `1px solid ${accentColor}`,
+              background: 'transparent',
+              color: accentColor,
+              fontFamily: 'Share Tech Mono, monospace',
+              fontSize: 10,
+              letterSpacing: 1,
+              cursor: 'pointer',
+            }}
+          >
+            RETRY CAMERA
+          </button>
+        </div>
+      )}
+
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          padding: 8,
+          fontFamily: 'Share Tech Mono, monospace',
+          fontSize: 10,
+          color: accentColor,
+          background: 'linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0))',
+        }}
+      >
+        {camera.label}
+        <br />
+        {camera.resolution} - {camera.fps}fps
+        <br />
+        LATENCY: {Number(latencyMs).toFixed(0)}ms
+      </div>
+
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          padding: 8,
+          fontFamily: 'Share Tech Mono, monospace',
+          fontSize: 10,
+          color: accentColor,
+          textAlign: 'right',
+          background: 'linear-gradient(180deg, rgba(0,0,0,0.42), rgba(0,0,0,0))',
+        }}
+      >
+        <span
+          style={{
+            display: 'inline-block',
+            width: 8,
+            height: 8,
+            borderRadius: '50%',
+            background: statusColor,
+            marginRight: 4,
+          }}
+        />
+        {statusText}
+        <br />
+        SOURCE: {isBrowserCamera ? 'BROWSER' : camera.mode.toUpperCase()}
+      </div>
+
+      <div
+        style={{
+          position: 'absolute',
+          bottom: 0,
+          right: 0,
+          padding: 8,
+          fontFamily: 'Share Tech Mono, monospace',
+          fontSize: 10,
+          color: accentColor,
+          textAlign: 'right',
+          background: 'linear-gradient(0deg, rgba(0,0,0,0.42), rgba(0,0,0,0))',
+        }}
+      >
+        ZONE: {zone}
+        <br />
+        CAM LINK: {isLive ? 'OK' : 'PENDING'}
+      </div>
     </div>
   )
 }
