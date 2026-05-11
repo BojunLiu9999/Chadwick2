@@ -3,18 +3,13 @@
  */
 import React, { useEffect, useState } from 'react'
 
-import { EStop, Header, Panel, SectionLabel, TelemetryPanel, Toggle } from '../components/SharedComponents'
+import { CameraFeed, EStop, Header, Panel, SectionLabel, TelemetryPanel, Toggle } from '../components/SharedComponents'
 import { useRobotConnection } from '../hooks/useRobotConnection'
 import { robotAPI, sessionAPI } from '../services/api'
 import { isSessionPaused, normalizeSessionLogs } from '../utils/sessionLogs'
 import { useTelemetry } from '../hooks/useTelemetry'
 
-const MODES = [
-  { key: 'mobility_drills', icon: 'MD', label: 'Mobility\nDrills' },
-  { key: 'telepresence', icon: 'TP', label: 'Tele-\npresence' },
-  { key: 'choreography', icon: 'CH', label: 'Choreo-\ngraphy' },
-  { key: 'manual_inspect', icon: 'MI', label: 'Manual\nInspect' },
-]
+const SESSION_MODE = 'teleoperation'
 
 export default function OperatorPage() {
   const { telemetry, connected: wsConnected, lastError: telemetryError } = useTelemetry()
@@ -26,7 +21,6 @@ export default function OperatorPage() {
     disconnect,
   } = useRobotConnection()
   const [armed, setArmed] = useState(false)
-  const [mode, setMode] = useState('mobility_drills')
   const [safetyConfig, setSafetyConfig] = useState(null)
   const [sessionInfo, setSessionInfo] = useState({ active: false })
   const [sessionLogs, setSessionLogs] = useState([])
@@ -76,12 +70,6 @@ export default function OperatorPage() {
     }
   }, [telemetry?.motion_armed])
 
-  useEffect(() => {
-    if (telemetry?.current_mode) {
-      setMode(telemetry.current_mode)
-    }
-  }, [telemetry?.current_mode])
-
   const sendCmd = async command => {
     try {
       const locoCommands = ['MOVE_FWD', 'MOVE_BACK', 'TURN_LEFT', 'TURN_RIGHT', 'STOP']
@@ -114,11 +102,11 @@ export default function OperatorPage() {
   
   const handleHighLevelCommand = async command => {
   try {
-    const locoCommands = ['STOP', 'high stand']
-
     let result
 
-    if (locoCommands.includes(command)) {
+    if (command === 'HOME_POSE') {
+      result = await robotAPI.sendCommand(command)
+    } else if (command === 'STOP') {
       result = await robotAPI.runLoco(command)
     } else {
       result = await robotAPI.runHighLevel(command)
@@ -184,7 +172,7 @@ export default function OperatorPage() {
   const handleStartSession = async () => {
     setSessionBusy(true)
     try {
-      await sessionAPI.start(mode)
+      await sessionAPI.start(SESSION_MODE)
       await loadSessionState()
     } catch (error) {
       window.alert(String(error))
@@ -232,6 +220,7 @@ export default function OperatorPage() {
   const robotReady = connection === 'ready'
   const robotConnected = connection === 'connected' || connection === 'ready'
   const canTeleop = robotReady && armed && !telemetry?.estop_active
+  const canHomePose = robotReady && !telemetry?.estop_active
   const connectionPill = connectionDisplay[connection] || connectionDisplay.unknown
   const statusPills = [
     connectionPill,
@@ -362,34 +351,20 @@ export default function OperatorPage() {
             <Toggle on={armed} onChange={handleArm} disabled={!robotReady} />
           </div>
 
-          <SectionLabel>Mode Preset</SectionLabel>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 14 }}>
-            {MODES.map(current => (
-              <button
-                key={current.key}
-                onClick={() => {
-                  setMode(current.key)
-                  sendCmd(`MODE_${current.key.toUpperCase()}`)
-                }}
-                style={{
-                  padding: '8px 6px',
-                  borderRadius: 5,
-                  textAlign: 'center',
-                  cursor: 'pointer',
-                  border: `1px solid ${mode === current.key ? 'var(--accent)' : 'var(--border)'}`,
-                  background: mode === current.key ? 'rgba(0,200,255,0.1)' : 'transparent',
-                  color: mode === current.key ? 'var(--accent)' : 'var(--text)',
-                  fontFamily: 'Exo 2, sans-serif',
-                  fontSize: 11,
-                  boxShadow: mode === current.key ? 'var(--glow)' : 'none',
-                  transition: 'all 0.2s',
-                  whiteSpace: 'pre-line',
-                }}
-              >
-                <div style={{ fontSize: 16, marginBottom: 3 }}>{current.icon}</div>
-                {current.label}
-              </button>
-            ))}
+          <div
+            style={{
+              padding: '9px 10px',
+              background: 'rgba(10,245,160,0.06)',
+              border: '1px solid rgba(10,245,160,0.26)',
+              borderRadius: 5,
+              marginBottom: 14,
+              fontFamily: 'Share Tech Mono, monospace',
+              fontSize: 10,
+              color: 'var(--accent2)',
+              lineHeight: 1.5,
+            }}
+          >
+            Motion mode is enabled on the robot with the remote controller before web teleoperation.
           </div>
 
           <SectionLabel>
@@ -496,13 +471,13 @@ export default function OperatorPage() {
           <SectionLabel>Quick Actions</SectionLabel>
           {[
              ['Stand Still', 'STOP'],
-             ['Home Pose', 'high stand'],
+             ['Home Pose', 'HOME_POSE'],
              ['Wave Greeting', 'high wave'],
           ].map(([label, command]) => (
             <button
               key={command}
               onClick={() => handleHighLevelCommand(command)}
-              disabled={!canTeleop}
+              disabled={command === 'HOME_POSE' ? !canHomePose : !canTeleop}
               style={{
                 width: '100%',
                 padding: 7,
@@ -513,12 +488,12 @@ export default function OperatorPage() {
                 color: 'var(--dim)',
                 fontFamily: 'Exo 2, sans-serif',
                 fontSize: 11,
-                cursor: !canTeleop ? 'not-allowed' : 'pointer',
+                cursor: command === 'HOME_POSE' ? (!canHomePose ? 'not-allowed' : 'pointer') : (!canTeleop ? 'not-allowed' : 'pointer'),
                 transition: 'all 0.2s',
-                opacity: !canTeleop ? 0.4 : 1,
+                opacity: command === 'HOME_POSE' ? (!canHomePose ? 0.4 : 1) : (!canTeleop ? 0.4 : 1),
               }}
               onMouseEnter={event => {
-                if (!canTeleop) {
+                if (command === 'HOME_POSE' ? !canHomePose : !canTeleop) {
                   return
                 }
                 event.target.style.borderColor = 'var(--text)'
@@ -645,46 +620,11 @@ export default function OperatorPage() {
         </Panel>
 
         <Panel title="Camera & Sensing" style={{ display: 'flex', flexDirection: 'column' }}>
-          <div
-            style={{
-              flex: 1,
-              minHeight: 200,
-              background: '#000',
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              position: 'relative',
-              overflow: 'hidden',
-              marginBottom: 8,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexDirection: 'column',
-              gap: 8,
-            }}
-          >
-            <div style={{ width: 60, height: 60, border: '1px solid rgba(0,200,255,0.3)', borderRadius: '50%', position: 'relative' }}>
-              <div style={{ position: 'absolute', width: 1, height: '100%', left: '50%', background: 'rgba(0,200,255,0.3)' }} />
-              <div style={{ position: 'absolute', height: 1, width: '100%', top: '50%', background: 'rgba(0,200,255,0.3)' }} />
-            </div>
-            <div style={{ fontFamily: 'Share Tech Mono, monospace', fontSize: 11, color: 'var(--dim)' }}>HEAD CAM - NO FEED (mock mode)</div>
-            <div style={{ position: 'absolute', top: 0, left: 0, padding: 8, fontFamily: 'Share Tech Mono, monospace', fontSize: 10, color: 'rgba(0,200,255,0.6)' }}>
-              HEAD_CAM_01
-              <br />
-              1920x1080 - 30fps
-              <br />
-              LATENCY: {(telemetry?.latency_ms ?? 18).toFixed(0)}ms
-            </div>
-            <div style={{ position: 'absolute', top: 0, right: 0, padding: 8, fontFamily: 'Share Tech Mono, monospace', fontSize: 10, color: 'rgba(0,200,255,0.6)', textAlign: 'right' }}>
-              REC
-              <br />
-              STREAM: OK
-            </div>
-            <div style={{ position: 'absolute', bottom: 0, right: 0, padding: 8, fontFamily: 'Share Tech Mono, monospace', fontSize: 10, color: 'rgba(0,200,255,0.6)', textAlign: 'right' }}>
-              ZONE: LAB G12
-              <br />
-              GEOFENCE: OK
-            </div>
-          </div>
+          <CameraFeed
+            latencyMs={telemetry?.latency_ms ?? 18}
+            zone={safetyConfig?.active_zone || 'LAB G12'}
+            accentColor="var(--accent)"
+          />
 
           <div
             style={{
