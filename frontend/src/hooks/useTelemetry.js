@@ -2,21 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/api/ws/telemetry'
 
+// Show "--" for any nullish numeric. Keeps unit attached to real values only,
+// so missing data reads as "--" rather than e.g. "--deg".
+export const fmt = (v, digits = 0, unit = '') =>
+  v == null ? '--' : `${Number(v).toFixed(digits)}${unit}`
+
 const DEFAULT_TELEMETRY = {
   timestamp: new Date().toISOString(),
-  battery_pct: 72,
-  imu_tilt_deg: 0.3,
-  latency_ms: 18,
-  core_temp_c: 54,
-  signal_dbm: -62,
-  motor_loads: {
-    L_HIP: 34,
-    R_HIP: 36,
-    L_KNEE: 71,
-    R_KNEE: 45,
-    L_ANKLE: 28,
-    R_ANKLE: 31,
-  },
+  battery_pct: null,
+  imu_tilt_deg: null,
+  latency_ms: null,
+  core_temp_c: null,
+  signal_dbm: null,
+  motor_loads: {},
   estop_active: false,
   motion_armed: false,
   current_mode: 'mobility_drills',

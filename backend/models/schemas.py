@@ -38,7 +38,7 @@ class RobotStatus(BaseModel):
     connected: bool
     motion_armed: bool
     current_mode: str
-    battery_pct: float
+    battery_pct: Optional[float] = None
     estop_active: bool
     system_status: Optional[str] = None
     status_message: Optional[str] = None
@@ -58,7 +58,7 @@ class CameraStatus(BaseModel):
 
 class TelemetrySnapshot(BaseModel):
     timestamp: datetime
-    battery_pct: float
+    battery_pct: Optional[float] = None
     imu_tilt_deg: float
     latency_ms: float
     core_temp_c: float

@@ -4,6 +4,7 @@ Robot control routes.
 import subprocess
 import json
 import os
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -478,4 +479,22 @@ async def run_locomotion_command(
         "command": command,
         "stdout": result.stdout,
         "stderr": result.stderr,
+    }
+
+
+@router.get("/_debug/dds")
+async def debug_dds():
+    """Diagnostic counters for the in-process DDS bridge. No auth — read-only."""
+    now = time.monotonic()
+    low_recv = getattr(mock_robot, "_low_state_recv_at", None)
+    bms_recv = getattr(mock_robot, "_bms_state_recv_at", None)
+    return {
+        "low_state_count": getattr(mock_robot, "_low_state_count", None),
+        "low_state_recv_at": low_recv,
+        "low_state_age_ms": (now - low_recv) * 1000 if low_recv is not None else None,
+        "bms_state_count": getattr(mock_robot, "_bms_state_count", None),
+        "bms_state_recv_at": bms_recv,
+        "bms_state_age_ms": (now - bms_recv) * 1000 if bms_recv is not None else None,
+        "double_init_recoveries": getattr(mock_robot, "_double_init_recoveries", None),
+        "now_monotonic": now,
     }

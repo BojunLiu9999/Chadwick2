@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 
 import { useAuth } from '../context/AuthContext'
 import { useCameraFeed } from '../hooks/useCameraFeed'
+import { fmt } from '../hooks/useTelemetry'
 import { formatLogTime } from '../utils/sessionLogs'
 
 const ALERT_RULES = {
@@ -722,25 +723,25 @@ export function TelemetryPanel({
   const metricCards = [
     {
       name: 'IMU Tilt',
-      value: `${(telemetry?.imu_tilt_deg ?? 0.3).toFixed(1)}deg`,
+      value: fmt(telemetry?.imu_tilt_deg, 1, 'deg'),
       unit: 'deg',
       level: 'normal',
     },
     {
       name: 'Latency',
-      value: `${(telemetry?.latency_ms ?? 18).toFixed(0)}ms`,
+      value: fmt(telemetry?.latency_ms, 0, 'ms'),
       unit: '',
       level: 'normal',
     },
     {
       name: 'Core Temp',
-      value: `${(telemetry?.core_temp_c ?? 54).toFixed(1)}deg`,
+      value: fmt(telemetry?.core_temp_c, 1, 'deg'),
       unit: 'C',
       level: getMetricLevel('core_temp_c', telemetry?.core_temp_c),
     },
     {
       name: 'Signal',
-      value: `${(telemetry?.signal_dbm ?? -62).toFixed(0)}`,
+      value: fmt(telemetry?.signal_dbm, 0),
       unit: 'dBm',
       level: getMetricLevel('signal_dbm', telemetry?.signal_dbm),
     },
@@ -816,7 +817,9 @@ export function TelemetryPanel({
               style={{
                 height: '100%',
                 borderRadius: 4,
-                width: `${Math.max(0, Math.min(100, telemetry?.battery_pct ?? 72))}%`,
+                width: telemetry?.battery_pct == null
+                  ? '0%'
+                  : `${Math.max(0, Math.min(100, telemetry.battery_pct))}%`,
                 background: batteryLevel === 'critical'
                   ? 'linear-gradient(90deg, #a80000, var(--danger))'
                   : batteryLevel === 'warning'
@@ -834,7 +837,7 @@ export function TelemetryPanel({
               width: 36,
             }}
           >
-            {(telemetry?.battery_pct ?? 72).toFixed(0)}%
+            {fmt(telemetry?.battery_pct, 0, '%')}
           </span>
         </div>
 

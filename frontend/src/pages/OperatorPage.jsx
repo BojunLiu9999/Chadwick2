@@ -7,7 +7,7 @@ import { CameraFeed, EStop, Header, Panel, SectionLabel, TelemetryPanel, Toggle 
 import { useRobotConnection } from '../hooks/useRobotConnection'
 import { robotAPI, sessionAPI } from '../services/api'
 import { isSessionPaused, normalizeSessionLogs } from '../utils/sessionLogs'
-import { useTelemetry } from '../hooks/useTelemetry'
+import { fmt, useTelemetry } from '../hooks/useTelemetry'
 
 const SESSION_MODE = 'teleoperation'
 
@@ -647,7 +647,7 @@ export default function OperatorPage() {
               { type: 'ok', title: 'Readiness Check Passed', body: 'All systems nominal.', time: '09:14:22' },
               {
                 type: 'warn',
-                title: `Core Temp ${(telemetry?.core_temp_c ?? 54).toFixed(0)}degC`,
+                title: `Core Temp ${fmt(telemetry?.core_temp_c, 0, 'degC')}`,
                 body: 'Monitor thermal load.',
                 time: new Date().toTimeString().slice(0, 8),
               },

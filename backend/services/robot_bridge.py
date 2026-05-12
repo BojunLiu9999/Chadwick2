@@ -21,6 +21,7 @@ from datetime import datetime
 from enum import Enum
 
 from config import settings
+from unitree_sdk2py.idl.unitree_hg.msg.dds_ import BmsState_
 
 
 class ConnectionState(str, Enum):
@@ -48,11 +49,20 @@ class RealRobotBridge:
 
         
         self._loco_client = None
-        self._low_state = None         
+        self._low_state = None
+        self._low_state_count = 0
+        self._low_state_recv_at = None
         self._state_lock = threading.Lock()
-        self._sub = None               
+        self._sub = None
 
-        
+        self._bms_state = None
+        self._bms_state_count = 0
+        self._bms_state_recv_at = None
+        self._bms_sub = None
+
+        self._double_init_recoveries = 0
+
+
         self._safety_config = {
             "max_speed": 0.4,
             "turn_rate": 30.0,
@@ -143,9 +153,11 @@ class RealRobotBridge:
                 self.last_error = None
                 self.motion_armed = False
                 self._low_state = None
+                self._bms_state = None
                 # SDK 没有显式 close，下次 connect 重新 Init
                 self._loco_client = None
                 self._sub = None
+                self._bms_sub = None
 
         return await self.get_status()
 
@@ -173,12 +185,23 @@ class RealRobotBridge:
                     f"[real_robot] ChannelFactory already initialized, reusing: {e}",
                     file=sys.stderr,
                 )
+                self._double_init_recoveries += 1
             else:
                 raise
 
         # 订阅 LowState（包含 IMU、电机、电池等）
         self._sub = ChannelSubscriber("rt/lowstate", LowState_)
         self._sub.Init(self._on_low_state, 10)
+
+        # 订阅 BMS（rt/bmsstate 才是真电量 SOC；失败不影响主链路）
+        try:
+            self._bms_sub = ChannelSubscriber('rt/bmsstate', BmsState_)
+            self._bms_sub.Init(self._on_bms_state, 10)
+        except Exception as e:
+            import sys
+            print(f"[real_robot] BMS subscription failed (continuing without battery): {e!r}",
+                  file=sys.stderr)
+            self._bms_sub = None
 
         # 高层运动客户端
         self._loco_client = LocoClient()
@@ -189,6 +212,32 @@ class RealRobotBridge:
         """SDK 的回调，跑在 SDK 自己的线程，不能 await。"""
         with self._state_lock:
             self._low_state = msg
+            self._low_state_count += 1
+            self._low_state_recv_at = time.monotonic()
+            cnt = self._low_state_count
+            bms = self._bms_state
+            bms_cnt = self._bms_state_count
+
+        # DEBUG: remove after temp/battery investigation
+        if cnt % 200 == 0:
+            try:
+                import sys
+                m0 = msg.motor_state[0]
+                print(f"[DBG] tick={msg.tick}, "
+                      f"motor[0].temp={list(m0.temperature)}, "
+                      f"bms_count={bms_cnt}, "
+                      f"bms_soc={bms.soc if bms else None}",
+                      file=sys.stderr)
+            except Exception as e:
+                import sys
+                print(f"[DBG] {e!r}", file=sys.stderr)
+
+    def _on_bms_state(self, msg):
+        """SDK 的回调，跑在 SDK 自己的线程，不能 await。"""
+        with self._state_lock:
+            self._bms_state = msg
+            self._bms_state_count += 1
+            self._bms_state_recv_at = time.monotonic()
 
     async def _wait_first_state(self, timeout: float):
         start = time.time()
@@ -278,23 +327,26 @@ class RealRobotBridge:
             "system_status": self._get_system_status(),
         }
 
-    def _read_battery(self) -> float:
-        with self._state_lock:
-            s = self._low_state
-        if s is None:
-            return 0.0
+    def _read_battery(self):
+        # SOC 来自 rt/bmsstate（uint8, 0-100）。BMS 还没收到时返回 None，
+        # 让上层把"没数据"和"电量为 0"区分开。
         try:
-            # G1 LowState 有 power_v / power_a 字段，bms_state 可能没有
-            # 按实测调整这里的字段路径
-            return float(getattr(s, "power_v", 0)) * 100 / 60  # 粗略转换
+            with self._state_lock:
+                bms = self._bms_state
+            if bms is None:
+                return None
+            return int(bms.soc)
         except Exception:
-            return 0.0
+            return None
 
     def _read_max_temp(self, s) -> float:
         try:
-            temps = [m.temperature for m in s.motor_state[:23]]
+            # motor_state[i].temperature is [coil, mos]; flatten across all
+            # 23 joints and take the max so the surfaced number reflects
+            # whichever component is hottest.
+            temps = [t for m in s.motor_state[:23] for t in m.temperature]
             return float(max(temps)) if temps else 0.0
-        except Exception:
+        except (TypeError, ValueError, IndexError, AttributeError):
             return 0.0
 
     def _motor_load_pct(self, s, idx: int) -> int:
