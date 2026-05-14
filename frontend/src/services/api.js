@@ -44,6 +44,7 @@ export const robotAPI = {
   playAudio: () => http.post('/robot/audio'),
   runHighLevel: command => http.post(`/robot/high-level/${command}`),
   runLoco: command => http.post(`/robot/loco/${command}`),
+  chat: message => http.post('/robot/chat', { message }),
 }
 
 export const cameraAPI = {

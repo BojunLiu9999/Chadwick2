@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     CAMERA_COMMAND_TIMEOUT: float = 8.0
     ROBOT_AUDIO_WAV: str = ""
 
+    OPENAI_API_KEY: str = ""
+    OPENAI_CHAT_MODEL: str = "gpt-4o-mini"
+    OPENAI_TTS_MODEL: str = "tts-1"
+    OPENAI_TTS_VOICE: str = "alloy"
+
     class Config:
         env_file = ("env", ".env")
 

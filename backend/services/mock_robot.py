@@ -205,6 +205,12 @@ class MockRobot:
     async def apply_safety_config(self, config: dict):
         self._safety_config.update(config)
 
+    async def say(self, pcm_16k_mono: bytes) -> str:
+        if not self.is_connected:
+            raise RuntimeError("AudioClient not initialized (robot not connected)")
+        await asyncio.sleep(0.05)
+        return f"mock-spoke-{len(pcm_16k_mono)}-bytes"
+
 
 mock_robot = MockRobot()
 

@@ -22,7 +22,7 @@ if __name__ == "__main__":
     ret = audio_client.GetVolume()
     print("debug GetVolume: ",ret)
 
-    audio_client.SetVolume(85)
+    audio_client.SetVolume(300)
 
     ret = audio_client.GetVolume()
     print("debug GetVolume: ",ret)

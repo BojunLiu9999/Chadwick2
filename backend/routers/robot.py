@@ -1,9 +1,11 @@
 """
 Robot control routes.
 """
+import asyncio
 import subprocess
 import json
 import os
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -11,11 +13,14 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from pydantic import BaseModel, Field
+
 from config import settings
 from models.database import LogEntry, User, get_db
 from models.schemas import RobotCommand, RobotStatus, SafetyConfigUpdate
 from routers.auth import get_current_user, require_supervisor
 from services import robot as mock_robot
+from services.llm import chat_and_tts
 
 router = APIRouter()
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -66,6 +71,103 @@ def encode_detail(data: dict | None) -> str | None:
     if not data:
         return None
     return json.dumps(data, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Teleop watchdog
+#
+# The frontend re-sends the held direction every ~250 ms. If those re-sends
+# stop arriving (browser tab hangs, tab closed mid-hold, Wi-Fi drops, JS
+# crash) the robot must not keep walking — it would happily march into a wall
+# or off the testbed. A single async task polls _last_motion_ts and, after
+# TELEOP_TIMEOUT_S of silence, fires one STOP and idles itself until the next
+# motion command resets the timer.
+# ---------------------------------------------------------------------------
+MOTION_COMMANDS = {
+    "MOVE_FWD",
+    "MOVE_BACK",
+    "TURN_LEFT",
+    "TURN_RIGHT",
+    "MOVE_LEFT",
+    "MOVE_RIGHT",
+}
+TELEOP_TIMEOUT_S = 2.0
+_TELEOP_WATCHDOG_TICK_S = 0.2
+
+# time.monotonic() of the last accepted motion command. 0.0 == idle (watchdog
+# is dormant until the next motion command arms it).
+_last_motion_ts: float = 0.0
+_teleop_watchdog_task: "asyncio.Task | None" = None
+
+
+def _mark_motion_command(command: str) -> None:
+    """Arm/refresh the watchdog if `command` is a motion command, idle it on STOP.
+
+    Called from the loco endpoints. Audio, arm gestures, status, etc. must not
+    call this — only commands that physically move the base.
+    """
+    global _last_motion_ts
+    if command in MOTION_COMMANDS:
+        _last_motion_ts = time.monotonic()
+    elif command == "STOP":
+        # Operator (or watchdog) already told the robot to halt — go dormant.
+        _last_motion_ts = 0.0
+
+
+async def _teleop_watchdog_loop() -> None:
+    while True:
+        try:
+            await asyncio.sleep(_TELEOP_WATCHDOG_TICK_S)
+            ts = _last_motion_ts
+            if ts == 0.0:
+                # Dormant: no motion command since boot or since last STOP.
+                continue
+            if time.monotonic() - ts <= TELEOP_TIMEOUT_S:
+                continue
+
+            # Timeout: idle the timer first so the watchdog never fires twice
+            # for the same outage, then dispatch STOP via the loco helper.
+            globals()["_last_motion_ts"] = 0.0
+            print(
+                "[teleop-watchdog] no motion cmd for "
+                f"{TELEOP_TIMEOUT_S * 1000:.0f}ms — firing STOP",
+                file=sys.stderr,
+            )
+            try:
+                await asyncio.to_thread(
+                    run_robot_script,
+                    ROBOT_COMMANDS_DIR / "run_loco_command.py",
+                    "STOP",
+                )
+            except Exception as exc:
+                print(f"[teleop-watchdog] STOP dispatch failed: {exc}", file=sys.stderr)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Never let the watchdog die on a transient error — log and retry.
+            print(f"[teleop-watchdog] loop error: {exc}", file=sys.stderr)
+
+
+def start_teleop_watchdog() -> None:
+    """Start the watchdog task on a running event loop (idempotent)."""
+    global _teleop_watchdog_task
+    if _teleop_watchdog_task is not None and not _teleop_watchdog_task.done():
+        return
+    _teleop_watchdog_task = asyncio.create_task(
+        _teleop_watchdog_loop(), name="teleop-watchdog"
+    )
+
+
+async def stop_teleop_watchdog() -> None:
+    global _teleop_watchdog_task
+    if _teleop_watchdog_task is None:
+        return
+    _teleop_watchdog_task.cancel()
+    try:
+        await _teleop_watchdog_task
+    except asyncio.CancelledError:
+        pass
+    _teleop_watchdog_task = None
 
 
 @router.get("/status", response_model=RobotStatus)
@@ -140,6 +242,7 @@ async def send_command(
     loco_commands = {"MOVE_FWD", "MOVE_BACK", "TURN_LEFT", "TURN_RIGHT", "MOVE_LEFT", "MOVE_RIGHT", "STOP"}
 
     if cmd.command in loco_commands:
+        _mark_motion_command(cmd.command)
         result = run_robot_script(
             ROBOT_COMMANDS_DIR / "run_loco_command.py",
             cmd.command,
@@ -314,6 +417,53 @@ async def get_safety_config(
         }
     return config
     
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=500)
+
+
+@router.post("/chat")
+async def chat_with_robot(
+    req: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not mock_robot.is_connected:
+        raise HTTPException(status_code=409, detail="Robot is not connected")
+
+    try:
+        result = await chat_and_tts(req.message)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"LLM/TTS failed: {exc}") from exc
+
+    try:
+        await mock_robot.say(result.pcm_16k_mono)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Speaker playback failed: {exc}") from exc
+
+    try:
+        db.add(LogEntry(
+            session_id=mock_robot.current_session_id or "NO_SESSION",
+            operator=current_user.username,
+            entry_type="CMD",
+            event="CHAT",
+            detail=encode_detail({
+                "message": req.message,
+                "reply": result.reply,
+                "pcm_bytes": len(result.pcm_16k_mono),
+            }),
+        ))
+        await db.commit()
+    except Exception as e:
+        import sys
+        print(f"[audit log failed] {e}", file=sys.stderr)
+
+    return {"success": True, "message": req.message, "reply": result.reply}
+
+
 @router.post("/audio")
 def run_audio_command():
     try:
@@ -425,6 +575,11 @@ async def run_locomotion_command(
             "success": False,
             "error": "Locomotion command not allowed"
         }
+
+    # Refresh the watchdog *before* the (potentially slow) SDK subprocess so
+    # repeat-fires from a held button stay coherent even if a previous call
+    # is still in flight.
+    _mark_motion_command(command)
 
     try:
         result = run_robot_script(

@@ -60,6 +60,9 @@ class RealRobotBridge:
         self._bms_state_recv_at = None
         self._bms_sub = None
 
+        self._audio_client = None
+        self._tts_index = 0
+
         self._double_init_recoveries = 0
 
 
@@ -158,6 +161,7 @@ class RealRobotBridge:
                 self._loco_client = None
                 self._sub = None
                 self._bms_sub = None
+                self._audio_client = None
 
         return await self.get_status()
 
@@ -169,6 +173,7 @@ class RealRobotBridge:
         )
         from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
         from unitree_sdk2py.g1.loco.g1_loco_client import LocoClient
+        from unitree_sdk2py.g1.audio.g1_audio_client import AudioClient
 
         # G1 用的是 unitree_hg IDL（不是 unitree_go），别搞错
         # Disconnect → Reconnect within the same backend process: the SDK's
@@ -207,6 +212,17 @@ class RealRobotBridge:
         self._loco_client = LocoClient()
         self._loco_client.SetTimeout(10.0)
         self._loco_client.Init()
+
+        # 语音客户端（chat/say 用，与 LocoClient 走不同 RPC service）
+        try:
+            self._audio_client = AudioClient()
+            self._audio_client.SetTimeout(10.0)
+            self._audio_client.Init()
+        except Exception as e:
+            import sys
+            print(f"[real_robot] AudioClient init failed (chat disabled): {e!r}",
+                  file=sys.stderr)
+            self._audio_client = None
 
     def _on_low_state(self, msg):
         """SDK 的回调，跑在 SDK 自己的线程，不能 await。"""
@@ -429,6 +445,22 @@ class RealRobotBridge:
 
     async def apply_safety_config(self, config: dict):
         self._safety_config.update(config)
+
+    # ───────────── 语音 ─────────────
+    async def say(self, pcm_16k_mono: bytes) -> str:
+        """Stream 16 kHz mono 16-bit PCM to the robot speaker via AudioClient."""
+        if self._audio_client is None:
+            raise RuntimeError("AudioClient not initialized (robot not connected)")
+        if not pcm_16k_mono:
+            raise ValueError("empty PCM payload")
+
+        self._tts_index += 1
+        stream_id = f"chat-{self._tts_index}"
+        await asyncio.to_thread(
+            self._audio_client.PlayStream, "chadwick", stream_id, pcm_16k_mono,
+        )
+        await asyncio.to_thread(self._audio_client.PlayStop, "chadwick")
+        return stream_id
 
 
 # 模块级单例

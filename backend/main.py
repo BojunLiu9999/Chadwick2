@@ -16,7 +16,10 @@ async def lifespan(app: FastAPI):
     await init_db()
     print("[startup] database initialization completed")
     print(f"[startup] robot mode: {settings.ROBOT_MODE}")
+    robot.start_teleop_watchdog()
+    print(f"[startup] teleop watchdog armed (timeout {robot.TELEOP_TIMEOUT_S * 1000:.0f}ms)")
     yield
+    await robot.stop_teleop_watchdog()
     print("[shutdown] service closed")
 
 

@@ -1,10 +1,11 @@
 /**
  * Operator page for the Week 1 command center demo.
  */
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 
 import { CameraFeed, EStop, Header, Panel, SectionLabel, TelemetryPanel, Toggle } from '../components/SharedComponents'
 import { useRobotConnection } from '../hooks/useRobotConnection'
+import { useTeleopHold } from '../hooks/useTeleopHold'
 import { robotAPI, sessionAPI } from '../services/api'
 import { isSessionPaused, normalizeSessionLogs } from '../utils/sessionLogs'
 import { fmt, useTelemetry } from '../hooks/useTelemetry'
@@ -20,12 +21,17 @@ export default function OperatorPage() {
     connect,
     disconnect,
   } = useRobotConnection()
+
   const [armed, setArmed] = useState(false)
   const [safetyConfig, setSafetyConfig] = useState(null)
   const [sessionInfo, setSessionInfo] = useState({ active: false })
   const [sessionLogs, setSessionLogs] = useState([])
   const [sessionBusy, setSessionBusy] = useState(false)
   const [sessionPaused, setSessionPaused] = useState(false)
+
+  const [chatInput, setChatInput] = useState('')
+  const [chatBusy, setChatBusy] = useState(false)
+  const [chatTranscript, setChatTranscript] = useState([])
 
   const connectionDisplay = {
     disconnected: { label: 'DISCONNECTED', color: 'red' },
@@ -86,6 +92,20 @@ export default function OperatorPage() {
     }
   }
 
+  // Press-and-hold path: re-fires every 250 ms while a direction button is
+  // held. We swallow errors here rather than alerting — a single dropped frame
+  // is normal, the watchdog catches sustained drops, and a flood of alerts
+  // while holding a button would be unusable.
+  const sendLocoSilent = useCallback(async command => {
+    try {
+      await robotAPI.runLoco(command)
+    } catch (error) {
+      console.warn(`loco ${command} failed:`, error)
+    }
+  }, [])
+
+  const { startMove, stopMove } = useTeleopHold({ sendCommand: sendLocoSilent, repeatMs: 1000 })
+
   const handlePlayAudio = async () => {
     try {
       const result = await robotAPI.playAudio()
@@ -101,33 +121,23 @@ export default function OperatorPage() {
       window.alert(`❌ Audio failed: ${error}`)
     }
   }
-  
+
   const handleHighLevelCommand = async command => {
-  try {
-    let result
+    try {
+      const result = await robotAPI.runHighLevel(command)
 
-    if (command === 'HOME_POSE') {
-      result = await robotAPI.sendCommand(command)
-    } else if (command === 'STOP') {
-      result = await robotAPI.runLoco(command)
-    } else {
-      result = await robotAPI.runHighLevel(command)
+      console.log('Command result:', result)
+
+      if (result.success) {
+        window.alert(`✅ ${command} sent`)
+      } else {
+        window.alert(`❌ ${command} failed`)
+      }
+    } catch (error) {
+      console.error(error)
+      window.alert(`❌ Command failed: ${error}`)
     }
-
-    console.log('Command result:', result)
-
-    if (result.success) {
-      window.alert(`✅ ${command} sent`)
-    } else {
-      window.alert(`❌ ${command} failed`)
-    }
-
-  } catch (error) {
-    console.error(error)
-    window.alert(`❌ Command failed: ${error}`)
   }
-}
-  
 
   const handleEstop = async active => {
     try {
@@ -150,6 +160,25 @@ export default function OperatorPage() {
       await loadSessionState()
     } catch (error) {
       window.alert(String(error))
+    }
+  }
+
+  const handleSendChat = async () => {
+    const text = chatInput.trim()
+    if (!text || chatBusy) return
+
+    setChatBusy(true)
+    setChatTranscript(prev => [...prev, { role: 'you', text, ts: Date.now() }])
+    setChatInput('')
+
+    try {
+      const result = await robotAPI.chat(text)
+      setChatTranscript(prev => [...prev, { role: 'robot', text: result.reply, ts: Date.now() }])
+    } catch (error) {
+      const message = typeof error === 'string' ? error : error?.message || 'Chat failed'
+      setChatTranscript(prev => [...prev, { role: 'error', text: message, ts: Date.now() }])
+    } finally {
+      setChatBusy(false)
     }
   }
 
@@ -202,9 +231,7 @@ export default function OperatorPage() {
     }
 
     const tag = window.prompt('Tag label:', 'CHECKPOINT')
-    if (!tag) {
-      return
-    }
+    if (!tag) return
 
     const note = window.prompt('Optional note:', '') || null
 
@@ -222,8 +249,8 @@ export default function OperatorPage() {
   const robotReady = connection === 'ready'
   const robotConnected = connection === 'connected' || connection === 'ready'
   const canTeleop = robotReady && armed && !telemetry?.estop_active
-  const canHomePose = robotReady && !telemetry?.estop_active
   const connectionPill = connectionDisplay[connection] || connectionDisplay.unknown
+
   const statusPills = [
     connectionPill,
     { label: armed ? 'MOTION ARMED' : 'MOTION DISARMED', color: armed ? 'green' : 'yellow' },
@@ -285,6 +312,7 @@ export default function OperatorPage() {
               <span style={{ fontFamily: 'Rajdhani, sans-serif', fontWeight: 600, letterSpacing: 1 }}>
                 ROBOT LINK
               </span>
+
               {robotConnected ? (
                 <button
                   onClick={handleDisconnectRobot}
@@ -349,7 +377,9 @@ export default function OperatorPage() {
               marginBottom: 12,
             }}
           >
-            <span style={{ fontFamily: 'Rajdhani, sans-serif', fontWeight: 600, letterSpacing: 1 }}>MOTION ARM</span>
+            <span style={{ fontFamily: 'Rajdhani, sans-serif', fontWeight: 600, letterSpacing: 1 }}>
+              MOTION ARM
+            </span>
             <Toggle on={armed} onChange={handleArm} disabled={!robotReady} />
           </div>
 
@@ -372,6 +402,7 @@ export default function OperatorPage() {
           <SectionLabel>
             Speed Limit <span style={{ color: 'var(--warn)', fontSize: 9 }}>SUPERVISOR ONLY</span>
           </SectionLabel>
+
           <div
             style={{
               padding: '8px 10px',
@@ -386,6 +417,7 @@ export default function OperatorPage() {
           >
             Safety limits can only be changed by a Supervisor.
           </div>
+
           {safetyConfig && (
             <div
               style={{
@@ -405,6 +437,7 @@ export default function OperatorPage() {
           )}
 
           <SectionLabel>Teleop</SectionLabel>
+
           {!canTeleop && (
             <div
               style={{
@@ -419,6 +452,7 @@ export default function OperatorPage() {
               Teleop enabled only when robot is ready, E-Stop is cleared, and motion is armed.
             </div>
           )}
+
           <div
             style={{
               display: 'grid',
@@ -439,12 +473,43 @@ export default function OperatorPage() {
               null,
               { cmd: 'MOVE_BACK', label: 'B' },
               null,
-            ].map((button, index) =>
-              button ? (
+            ].map((button, index) => {
+              if (!button) return <div key={index} />
+
+              const isStop = button.cmd === 'STOP'
+              const disabled = !isStop && !canTeleop
+
+              // STOP is single-tap; directional buttons are press-and-hold.
+              // Both mouse and touch events are wired so phones / tablets
+              // work without relying on synthesised mouse events.
+              const holdHandlers = isStop || disabled
+                ? {
+                    onClick: () => {
+                      stopMove()
+                      sendCmd('STOP')
+                    },
+                  }
+                : {
+                    onMouseDown: () => startMove(button.cmd),
+                    onMouseUp: stopMove,
+                    onMouseLeave: stopMove,
+                    onTouchStart: e => {
+                      e.preventDefault()
+                      startMove(button.cmd)
+                    },
+                    onTouchEnd: e => {
+                      e.preventDefault()
+                      stopMove()
+                    },
+                    onTouchCancel: stopMove,
+                    onContextMenu: e => e.preventDefault(),
+                  }
+
+              return (
                 <button
                   key={index}
-                  onClick={() => sendCmd(button.cmd)}
-                  disabled={button.cmd !== 'STOP' && !canTeleop}
+                  {...holdHandlers}
+                  disabled={disabled}
                   style={{
                     background: button.center ? 'rgba(0,200,255,0.08)' : 'var(--border)',
                     border: `1px solid ${button.center ? 'var(--accent)' : '#253545'}`,
@@ -452,62 +517,22 @@ export default function OperatorPage() {
                     color: button.center ? 'var(--accent)' : 'var(--text)',
                     fontSize: button.center ? 10 : 18,
                     fontFamily: button.center ? 'Share Tech Mono, monospace' : 'inherit',
-                    cursor: button.cmd !== 'STOP' && !canTeleop ? 'not-allowed' : 'pointer',
+                    cursor: disabled ? 'not-allowed' : 'pointer',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     transition: 'all 0.1s',
                     letterSpacing: button.center ? 1 : 0,
-                    opacity: button.cmd !== 'STOP' && !canTeleop ? 0.4 : 1,
+                    opacity: disabled ? 0.4 : 1,
+                    userSelect: 'none',
+                    touchAction: 'none',
                   }}
                 >
                   {button.label}
                 </button>
-              ) : (
-                <div key={index} />
-              ),
-            )}
+              )
+            })}
           </div>
-
-          <SectionLabel>Quick Actions</SectionLabel>
-          {[
-             ['Stand Still', 'STOP'],
-             ['Home Pose', 'HOME_POSE'],
-             ['Wave Greeting', 'high wave'],
-          ].map(([label, command]) => (
-            <button
-              key={command}
-              onClick={() => handleHighLevelCommand(command)}
-              disabled={command === 'HOME_POSE' ? !canHomePose : !canTeleop}
-              style={{
-                width: '100%',
-                padding: 7,
-                borderRadius: 5,
-                marginBottom: 6,
-                border: '1px solid var(--border)',
-                background: 'transparent',
-                color: 'var(--dim)',
-                fontFamily: 'Exo 2, sans-serif',
-                fontSize: 11,
-                cursor: command === 'HOME_POSE' ? (!canHomePose ? 'not-allowed' : 'pointer') : (!canTeleop ? 'not-allowed' : 'pointer'),
-                transition: 'all 0.2s',
-                opacity: command === 'HOME_POSE' ? (!canHomePose ? 0.4 : 1) : (!canTeleop ? 0.4 : 1),
-              }}
-              onMouseEnter={event => {
-                if (command === 'HOME_POSE' ? !canHomePose : !canTeleop) {
-                  return
-                }
-                event.target.style.borderColor = 'var(--text)'
-                event.target.style.color = 'var(--text)'
-              }}
-              onMouseLeave={event => {
-                event.target.style.borderColor = 'var(--border)'
-                event.target.style.color = 'var(--dim)'
-              }}
-            >
-              {label}
-            </button>
-          ))}
 
           <button
             onClick={handlePlayAudio}
@@ -527,97 +552,96 @@ export default function OperatorPage() {
           >
             ▶️ Play Audio
           </button>
-         <button
-  onClick={() => handleHighLevelCommand('shake hand')}
-  style={{
-    width: '100%',
-    padding: 7,
-    borderRadius: 5,
-    marginBottom: 6,
-    border: '1px solid var(--accent)',
-    background: 'transparent',
-    color: 'var(--accent)',
-    fontFamily: 'Exo 2, sans-serif',
-    fontSize: 11,
-    cursor: 'pointer',
-  }}
->
-  🤝 Shake Hand
-</button>
 
-<button
-  onClick={() => handleHighLevelCommand('high wave')}
-  style={{
-    width: '100%',
-    padding: 7,
-    borderRadius: 5,
-    marginBottom: 6,
-    border: '1px solid var(--accent)',
-    background: 'transparent',
-    color: 'var(--accent)',
-    fontFamily: 'Exo 2, sans-serif',
-    fontSize: 11,
-    cursor: 'pointer',
-  }}
->
-  👋 Wave Hand
-</button>
+          <button
+            onClick={() => handleHighLevelCommand('shake hand')}
+            style={{
+              width: '100%',
+              padding: 7,
+              borderRadius: 5,
+              marginBottom: 6,
+              border: '1px solid var(--accent)',
+              background: 'transparent',
+              color: 'var(--accent)',
+              fontFamily: 'Exo 2, sans-serif',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            🤝 Shake Hand
+          </button>
 
-<button
-  onClick={() => handleHighLevelCommand('clap')}
-  style={{
-    width: '100%',
-    padding: 7,
-    borderRadius: 5,
-    marginBottom: 6,
-    border: '1px solid var(--accent)',
-    background: 'transparent',
-    color: 'var(--accent)',
-    fontFamily: 'Exo 2, sans-serif',
-    fontSize: 11,
-    cursor: 'pointer',
-  }}
->
-  👏 Clap
-</button>
+          <button
+            onClick={() => handleHighLevelCommand('high wave')}
+            style={{
+              width: '100%',
+              padding: 7,
+              borderRadius: 5,
+              marginBottom: 6,
+              border: '1px solid var(--accent)',
+              background: 'transparent',
+              color: 'var(--accent)',
+              fontFamily: 'Exo 2, sans-serif',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            👋 Wave Hand
+          </button>
 
-<button
-  onClick={() => handleHighLevelCommand('high five')}
-  style={{
-    width: '100%',
-    padding: 7,
-    borderRadius: 5,
-    marginBottom: 6,
-    border: '1px solid var(--accent)',
-    background: 'transparent',
-    color: 'var(--accent)',
-    fontFamily: 'Exo 2, sans-serif',
-    fontSize: 11,
-    cursor: 'pointer',
-  }}
->
-  ✋ High Five
-</button>
+          <button
+            onClick={() => handleHighLevelCommand('clap')}
+            style={{
+              width: '100%',
+              padding: 7,
+              borderRadius: 5,
+              marginBottom: 6,
+              border: '1px solid var(--accent)',
+              background: 'transparent',
+              color: 'var(--accent)',
+              fontFamily: 'Exo 2, sans-serif',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            👏 Clap
+          </button>
 
-<button
-  onClick={() => handleHighLevelCommand('hands up')}
-  style={{
-    width: '100%',
-    padding: 7,
-    borderRadius: 5,
-    marginBottom: 6,
-    border: '1px solid var(--accent)',
-    background: 'transparent',
-    color: 'var(--accent)',
-    fontFamily: 'Exo 2, sans-serif',
-    fontSize: 11,
-    cursor: 'pointer',
-  }}
->
-  🙌 Hands Up
-</button>
-          
-          
+          <button
+            onClick={() => handleHighLevelCommand('high five')}
+            style={{
+              width: '100%',
+              padding: 7,
+              borderRadius: 5,
+              marginBottom: 6,
+              border: '1px solid var(--accent)',
+              background: 'transparent',
+              color: 'var(--accent)',
+              fontFamily: 'Exo 2, sans-serif',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            ✋ High Five
+          </button>
+
+          <button
+            onClick={() => handleHighLevelCommand('hands up')}
+            style={{
+              width: '100%',
+              padding: 7,
+              borderRadius: 5,
+              marginBottom: 6,
+              border: '1px solid var(--accent)',
+              background: 'transparent',
+              color: 'var(--accent)',
+              fontFamily: 'Exo 2, sans-serif',
+              fontSize: 11,
+              cursor: 'pointer',
+            }}
+          >
+            🙌 Hands Up
+          </button>
         </Panel>
 
         <Panel title="Camera & Sensing" style={{ display: 'flex', flexDirection: 'column' }}>
@@ -642,6 +666,7 @@ export default function OperatorPage() {
           >
             Alerts
           </div>
+
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {[
               { type: 'ok', title: 'Readiness Check Passed', body: 'All systems nominal.', time: '09:14:22' },
@@ -662,19 +687,160 @@ export default function OperatorPage() {
                   borderRadius: 5,
                   fontSize: 11,
                   lineHeight: 1.4,
-                  borderLeft: `3px solid ${alert.type === 'ok' ? 'var(--accent2)' : alert.type === 'warn' ? 'var(--warn)' : 'var(--accent)'}`,
-                  background: alert.type === 'ok' ? 'rgba(10,245,160,0.05)' : alert.type === 'warn' ? 'rgba(255,184,0,0.06)' : 'rgba(0,200,255,0.05)',
+                  borderLeft: `3px solid ${
+                    alert.type === 'ok'
+                      ? 'var(--accent2)'
+                      : alert.type === 'warn'
+                        ? 'var(--warn)'
+                        : 'var(--accent)'
+                  }`,
+                  background:
+                    alert.type === 'ok'
+                      ? 'rgba(10,245,160,0.05)'
+                      : alert.type === 'warn'
+                        ? 'rgba(255,184,0,0.06)'
+                        : 'rgba(0,200,255,0.05)',
                 }}
               >
                 <div>
                   <div style={{ fontWeight: 600 }}>{alert.title}</div>
                   <div>{alert.body}</div>
                 </div>
-                <div style={{ fontFamily: 'Share Tech Mono, monospace', color: 'var(--dim)', fontSize: 10, whiteSpace: 'nowrap' }}>
+
+                <div
+                  style={{
+                    fontFamily: 'Share Tech Mono, monospace',
+                    color: 'var(--dim)',
+                    fontSize: 10,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
                   {alert.time}
                 </div>
               </div>
             ))}
+          </div>
+
+          <div
+            style={{
+              fontFamily: 'Rajdhani, sans-serif',
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: 2,
+              textTransform: 'uppercase',
+              color: 'var(--dim)',
+              margin: '14px 0 10px',
+              paddingBottom: 8,
+              borderBottom: '1px solid var(--border)',
+            }}
+          >
+            Chat (Speech)
+          </div>
+
+          {!robotConnected && (
+            <div
+              style={{
+                padding: '8px 10px',
+                border: '1px solid rgba(255,184,0,0.3)',
+                borderRadius: 5,
+                marginBottom: 8,
+                color: 'var(--warn)',
+                fontSize: 11,
+              }}
+            >
+              Connect the robot to start chatting.
+            </div>
+          )}
+
+          <div
+            style={{
+              flex: 1,
+              minHeight: 120,
+              maxHeight: 240,
+              overflowY: 'auto',
+              border: '1px solid var(--border)',
+              borderRadius: 5,
+              padding: 8,
+              marginBottom: 8,
+              background: 'rgba(0,0,0,0.18)',
+              fontFamily: 'Share Tech Mono, monospace',
+              fontSize: 11,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+            }}
+          >
+            {chatTranscript.length === 0 ? (
+              <div style={{ color: 'var(--dim)', fontStyle: 'italic' }}>
+                No messages yet. Try "Hello, who are you?"
+              </div>
+            ) : (
+              chatTranscript.map((entry, idx) => (
+                <div
+                  key={idx}
+                  style={{
+                    color:
+                      entry.role === 'you'
+                        ? 'var(--accent)'
+                        : entry.role === 'robot'
+                          ? 'var(--accent2)'
+                          : 'var(--danger)',
+                    lineHeight: 1.4,
+                  }}
+                >
+                  <span style={{ color: 'var(--dim)', marginRight: 6 }}>
+                    {entry.role === 'you' ? 'YOU>' : entry.role === 'robot' ? 'G1>' : 'ERR>'}
+                  </span>
+                  {entry.text}
+                </div>
+              ))
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              type="text"
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSendChat()
+                }
+              }}
+              placeholder={robotConnected ? 'Type a message...' : 'Robot not connected'}
+              disabled={!robotConnected || chatBusy}
+              maxLength={500}
+              style={{
+                flex: 1,
+                padding: '7px 9px',
+                borderRadius: 5,
+                border: '1px solid var(--border)',
+                background: 'rgba(0,0,0,0.25)',
+                color: 'var(--text)',
+                fontFamily: 'Share Tech Mono, monospace',
+                fontSize: 11,
+                outline: 'none',
+              }}
+            />
+            <button
+              onClick={handleSendChat}
+              disabled={!robotConnected || chatBusy || !chatInput.trim()}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 5,
+                border: '1px solid var(--accent)',
+                background: 'transparent',
+                color: 'var(--accent)',
+                fontFamily: 'Exo 2, sans-serif',
+                fontSize: 11,
+                letterSpacing: 1,
+                cursor: !robotConnected || chatBusy || !chatInput.trim() ? 'not-allowed' : 'pointer',
+                opacity: !robotConnected || chatBusy || !chatInput.trim() ? 0.4 : 1,
+              }}
+            >
+              {chatBusy ? '...' : 'SEND'}
+            </button>
           </div>
         </Panel>
 
