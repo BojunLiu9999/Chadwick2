@@ -31,6 +31,20 @@ class Settings(BaseSettings):
     OPENAI_TTS_MODEL: str = "tts-1"
     OPENAI_TTS_VOICE: str = "alloy"
 
+    # Azure VoiceLive (real-time speech-in / speech-out gateway). Endpoint is the
+    # wss:// URL from the tutor; the API key goes in .env (gitignored) only.
+    AZURE_VOICE_LIVE_ENDPOINT: str = ""
+    AZURE_VOICE_LIVE_API_KEY: str = ""
+    AZURE_VOICE_LIVE_MODEL: str = "gpt-4o-realtime-preview"
+    AZURE_VOICE_LIVE_VOICE: str = "alloy"
+    AZURE_VOICE_LIVE_WAKE_WORD: str = "Chadwick"
+
+    # Voice-triggered movement: password gate + unlock timeout + per-step duration.
+    # Empty password disables the feature entirely.
+    VOICE_MOVE_PASSWORD: str = "blue thunder"
+    VOICE_UNLOCK_TIMEOUT_S: float = 60.0
+    VOICE_STEP_SEC: float = 1.0
+
     class Config:
         env_file = ("env", ".env")
 

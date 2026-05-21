@@ -4,16 +4,24 @@
 import React, { useCallback, useEffect, useState } from 'react'
 
 import { CameraFeed, EStop, Header, Panel, SectionLabel, TelemetryPanel, Toggle } from '../components/SharedComponents'
+import { TelemetryHistoryPanel } from '../components/TelemetryHistoryPanel'
 import { useRobotConnection } from '../hooks/useRobotConnection'
 import { useTeleopHold } from '../hooks/useTeleopHold'
 import { robotAPI, sessionAPI } from '../services/api'
 import { isSessionPaused, normalizeSessionLogs } from '../utils/sessionLogs'
 import { fmt, useTelemetry } from '../hooks/useTelemetry'
+import { useVoiceChat } from '../hooks/useVoiceChat'
 
 const SESSION_MODE = 'teleoperation'
 
 export default function OperatorPage() {
-  const { telemetry, connected: wsConnected, lastError: telemetryError } = useTelemetry()
+  const {
+    telemetry,
+    connected: wsConnected,
+    lastError: telemetryError,
+    alerts,
+    dismissAlert,
+  } = useTelemetry()
   const {
     connection,
     lastError: connectionError,
@@ -29,9 +37,15 @@ export default function OperatorPage() {
   const [sessionBusy, setSessionBusy] = useState(false)
   const [sessionPaused, setSessionPaused] = useState(false)
 
-  const [chatInput, setChatInput] = useState('')
-  const [chatBusy, setChatBusy] = useState(false)
-  const [chatTranscript, setChatTranscript] = useState([])
+  const {
+    enabled: voiceEnabled,
+    status: voiceStatus,
+    error: voiceError,
+    partialText: voicePartial,
+    transcript: voiceTranscript,
+    toggle: toggleVoice,
+    clearTranscript: clearVoiceTranscript,
+  } = useVoiceChat()
 
   const connectionDisplay = {
     disconnected: { label: 'DISCONNECTED', color: 'red' },
@@ -160,25 +174,6 @@ export default function OperatorPage() {
       await loadSessionState()
     } catch (error) {
       window.alert(String(error))
-    }
-  }
-
-  const handleSendChat = async () => {
-    const text = chatInput.trim()
-    if (!text || chatBusy) return
-
-    setChatBusy(true)
-    setChatTranscript(prev => [...prev, { role: 'you', text, ts: Date.now() }])
-    setChatInput('')
-
-    try {
-      const result = await robotAPI.chat(text)
-      setChatTranscript(prev => [...prev, { role: 'robot', text: result.reply, ts: Date.now() }])
-    } catch (error) {
-      const message = typeof error === 'string' ? error : error?.message || 'Chat failed'
-      setChatTranscript(prev => [...prev, { role: 'error', text: message, ts: Date.now() }])
-    } finally {
-      setChatBusy(false)
     }
   }
 
@@ -734,34 +729,86 @@ export default function OperatorPage() {
               borderBottom: '1px solid var(--border)',
             }}
           >
-            Chat (Speech)
+            Voice (say "Chadwick")
           </div>
 
-          {!robotConnected && (
-            <div
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '8px 10px',
+              border: '1px solid var(--border)',
+              borderRadius: 5,
+              marginBottom: 8,
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <span style={{ fontFamily: 'Rajdhani, sans-serif', fontWeight: 600, letterSpacing: 1 }}>
+                {voiceEnabled ? '🎙️ LISTENING' : '🎙️ VOICE OFF'}
+              </span>
+              <span
+                style={{
+                  fontFamily: 'Share Tech Mono, monospace',
+                  fontSize: 10,
+                  color:
+                    voiceStatus === 'listening'
+                      ? 'var(--accent2)'
+                      : voiceStatus === 'connecting'
+                        ? 'var(--warn)'
+                        : voiceStatus === 'error'
+                          ? 'var(--danger)'
+                          : 'var(--dim)',
+                  marginTop: 2,
+                }}
+              >
+                {voiceStatus.toUpperCase()}
+              </span>
+            </div>
+            <button
+              onClick={toggleVoice}
               style={{
-                padding: '8px 10px',
-                border: '1px solid rgba(255,184,0,0.3)',
+                padding: '6px 12px',
                 borderRadius: 5,
-                marginBottom: 8,
-                color: 'var(--warn)',
+                border: `1px solid ${voiceEnabled ? 'var(--danger)' : 'var(--accent2)'}`,
+                background: 'transparent',
+                color: voiceEnabled ? 'var(--danger)' : 'var(--accent2)',
+                fontFamily: 'Exo 2, sans-serif',
                 fontSize: 11,
+                letterSpacing: 1,
+                cursor: 'pointer',
               }}
             >
-              Connect the robot to start chatting.
+              {voiceEnabled ? 'STOP' : 'START'}
+            </button>
+          </div>
+
+          {voiceError && (
+            <div
+              style={{
+                padding: '6px 10px',
+                border: '1px solid rgba(255,75,75,0.4)',
+                background: 'rgba(255,75,75,0.08)',
+                color: 'var(--danger)',
+                borderRadius: 5,
+                fontFamily: 'Share Tech Mono, monospace',
+                fontSize: 10,
+                marginBottom: 8,
+              }}
+            >
+              {voiceError}
             </div>
           )}
 
           <div
             style={{
-              flex: 1,
-              minHeight: 120,
-              maxHeight: 240,
+              minHeight: 90,
+              maxHeight: 180,
               overflowY: 'auto',
               border: '1px solid var(--border)',
               borderRadius: 5,
               padding: 8,
-              marginBottom: 8,
+              marginBottom: 12,
               background: 'rgba(0,0,0,0.18)',
               fontFamily: 'Share Tech Mono, monospace',
               fontSize: 11,
@@ -770,94 +817,140 @@ export default function OperatorPage() {
               gap: 6,
             }}
           >
-            {chatTranscript.length === 0 ? (
+            {voiceTranscript.length === 0 && !voicePartial ? (
               <div style={{ color: 'var(--dim)', fontStyle: 'italic' }}>
-                No messages yet. Try "Hello, who are you?"
+                Press START, then say "Chadwick, hello" to wake the assistant.
               </div>
             ) : (
-              chatTranscript.map((entry, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    color:
-                      entry.role === 'you'
-                        ? 'var(--accent)'
-                        : entry.role === 'robot'
-                          ? 'var(--accent2)'
-                          : 'var(--danger)',
-                    lineHeight: 1.4,
-                  }}
-                >
-                  <span style={{ color: 'var(--dim)', marginRight: 6 }}>
-                    {entry.role === 'you' ? 'YOU>' : entry.role === 'robot' ? 'G1>' : 'ERR>'}
-                  </span>
-                  {entry.text}
-                </div>
-              ))
+              <>
+                {voiceTranscript.map((entry, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      color: entry.role === 'you' ? 'var(--accent)' : 'var(--accent2)',
+                      lineHeight: 1.4,
+                    }}
+                  >
+                    <span style={{ color: 'var(--dim)', marginRight: 6 }}>
+                      {entry.role === 'you' ? 'YOU>' : 'G1>'}
+                    </span>
+                    {entry.text}
+                  </div>
+                ))}
+                {voicePartial && (
+                  <div style={{ color: 'var(--accent2)', lineHeight: 1.4, opacity: 0.7 }}>
+                    <span style={{ color: 'var(--dim)', marginRight: 6 }}>G1></span>
+                    {voicePartial}
+                    <span style={{ color: 'var(--dim)' }}>▍</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
-          <div style={{ display: 'flex', gap: 6 }}>
-            <input
-              type="text"
-              value={chatInput}
-              onChange={e => setChatInput(e.target.value)}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSendChat()
-                }
-              }}
-              placeholder={robotConnected ? 'Type a message...' : 'Robot not connected'}
-              disabled={!robotConnected || chatBusy}
-              maxLength={500}
-              style={{
-                flex: 1,
-                padding: '7px 9px',
-                borderRadius: 5,
-                border: '1px solid var(--border)',
-                background: 'rgba(0,0,0,0.25)',
-                color: 'var(--text)',
-                fontFamily: 'Share Tech Mono, monospace',
-                fontSize: 11,
-                outline: 'none',
-              }}
-            />
+          {voiceTranscript.length > 0 && (
             <button
-              onClick={handleSendChat}
-              disabled={!robotConnected || chatBusy || !chatInput.trim()}
+              onClick={clearVoiceTranscript}
               style={{
-                padding: '7px 14px',
-                borderRadius: 5,
-                border: '1px solid var(--accent)',
+                alignSelf: 'flex-end',
+                marginBottom: 10,
+                padding: '4px 10px',
+                borderRadius: 4,
+                border: '1px solid var(--border)',
                 background: 'transparent',
-                color: 'var(--accent)',
-                fontFamily: 'Exo 2, sans-serif',
-                fontSize: 11,
-                letterSpacing: 1,
-                cursor: !robotConnected || chatBusy || !chatInput.trim() ? 'not-allowed' : 'pointer',
-                opacity: !robotConnected || chatBusy || !chatInput.trim() ? 0.4 : 1,
+                color: 'var(--dim)',
+                fontFamily: 'Share Tech Mono, monospace',
+                fontSize: 10,
+                cursor: 'pointer',
               }}
             >
-              {chatBusy ? '...' : 'SEND'}
+              CLEAR
             </button>
-          </div>
+          )}
+
         </Panel>
 
-        <TelemetryPanel
-          telemetry={telemetry}
-          connected={wsConnected}
-          lastError={telemetryError}
-          logEntries={sessionLogs}
-          onAddTag={handleTag}
-          onStartSession={handleStartSession}
-          onPauseSession={handlePauseSession}
-          sessionBusy={sessionBusy}
-          sessionActive={sessionInfo.active}
-          sessionPaused={sessionPaused}
-          showSessionControls
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, overflowY: 'auto', background: 'var(--bg)' }}>
+          <TelemetryPanel
+            telemetry={telemetry}
+            connected={wsConnected}
+            lastError={telemetryError}
+            logEntries={sessionLogs}
+            onAddTag={handleTag}
+            onStartSession={handleStartSession}
+            onPauseSession={handlePauseSession}
+            sessionBusy={sessionBusy}
+            sessionActive={sessionInfo.active}
+            sessionPaused={sessionPaused}
+            showSessionControls
+          />
+          <TelemetryHistoryPanel
+            sessionId={sessionInfo.active ? sessionInfo.session_id : null}
+            sessionActive={sessionInfo.active}
+          />
+        </div>
       </div>
+
+      {alerts.length > 0 && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 60,
+            right: 16,
+            zIndex: 1000,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 8,
+            maxWidth: 360,
+          }}
+        >
+          {alerts.slice(0, 4).map(alert => {
+            const color =
+              alert.level === 'ERR' ? '#ff6b5b' : alert.level === 'WARN' ? '#ffd23f' : '#5bb8ff'
+            return (
+              <div
+                key={alert.id}
+                style={{
+                  border: `1px solid ${color}`,
+                  background: 'rgba(0,0,0,0.85)',
+                  color: 'var(--text)',
+                  padding: '8px 10px',
+                  borderRadius: 4,
+                  fontFamily: 'Share Tech Mono, monospace',
+                  fontSize: 11,
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  alignItems: 'flex-start',
+                }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div style={{ color, letterSpacing: 1, fontWeight: 600, marginBottom: 2 }}>
+                    {alert.level} · {alert.event}
+                  </div>
+                  <div style={{ color: 'var(--dim)', fontSize: 10 }}>
+                    {alert.detail ? JSON.stringify(alert.detail) : ''}
+                  </div>
+                </div>
+                <button
+                  onClick={() => dismissAlert(alert.id)}
+                  style={{
+                    background: 'transparent',
+                    color: 'var(--dim)',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    padding: 0,
+                  }}
+                  aria-label="dismiss"
+                >
+                  ×
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

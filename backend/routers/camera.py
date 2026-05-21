@@ -23,15 +23,18 @@ error through ``/api/camera/status``.
 worker tolerates the case where ``robot_bridge`` already initialised the
 factory and reuses the same DDS participant.
 """
+import asyncio
 import importlib
 import os
 import sys
 import threading
 import time
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
+from jose import JWTError, jwt
 
 from config import settings
 from models.database import User
@@ -306,5 +309,94 @@ async def get_camera_frame(current_user: User = Depends(get_current_user)):
         headers={
             "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
             "Pragma": "no-cache",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# MJPEG live stream
+# ---------------------------------------------------------------------------
+# Why a query-string token instead of Depends(get_current_user):
+#   <img src="/api/camera/stream.mjpg"> is opened by the browser natively —
+#   there's no opportunity to attach an Authorization: Bearer header from
+#   JavaScript. The two options are (a) cookie-based auth, which this app
+#   doesn't use, or (b) accept the JWT in the URL. We picked (b). It's an
+#   operator-only endpoint inside a lab LAN; the trade-off is acceptable.
+_MJPEG_BOUNDARY = "frame"
+# Backend cache-poll period for the stream. Should be slightly faster than the
+# capture worker so we never miss a frame in steady state. The worker caps at
+# 60 fps (resolve_unitree_fps) → 16 ms is more than enough headroom.
+_MJPEG_POLL_INTERVAL_S = 0.016
+# How long to keep waiting for the first frame before giving up and closing
+# the stream. Lets a freshly-booted backend stream survive the camera worker's
+# SDK init (~1-3 s) without falling over.
+_MJPEG_FIRST_FRAME_TIMEOUT_S = 10.0
+
+
+def _verify_jwt_token(token: str) -> None:
+    """Raise HTTPException(401) on invalid/missing token. Sync helper."""
+    if not token:
+        raise HTTPException(status_code=401, detail="token query parameter required")
+    try:
+        jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+    except JWTError as exc:
+        raise HTTPException(status_code=401, detail=f"invalid token: {exc}") from exc
+
+
+@router.get("/stream.mjpg")
+async def camera_mjpeg_stream(token: Optional[str] = None):
+    """Multipart/x-mixed-replace MJPEG stream of the camera feed.
+
+    Pushes JPEGs from _FRAME_CACHE as the worker produces them — single long-
+    lived HTTP request, no per-frame round-trip overhead. The browser decodes
+    each part inline via a plain <img src="/api/camera/stream.mjpg?token=…">.
+    """
+    if resolve_camera_mode() != "unitree_sdk":
+        raise HTTPException(
+            status_code=409,
+            detail="MJPEG stream is only available in unitree_sdk mode",
+        )
+    _verify_jwt_token(token or "")
+    start_camera_worker_if_needed()
+
+    boundary_bytes = f"--{_MJPEG_BOUNDARY}".encode("ascii")
+
+    async def stream_generator():
+        last_sent_at = 0.0
+        first_frame_deadline = time.monotonic() + _MJPEG_FIRST_FRAME_TIMEOUT_S
+        try:
+            while True:
+                snapshot = _snapshot_frame_cache()
+                payload = snapshot["bytes"]
+                captured_at = snapshot["captured_at"]
+
+                if payload is not None and captured_at > last_sent_at:
+                    header = (
+                        boundary_bytes + b"\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(payload)).encode("ascii") + b"\r\n\r\n"
+                    )
+                    yield header + payload + b"\r\n"
+                    last_sent_at = captured_at
+                elif payload is None and time.monotonic() > first_frame_deadline:
+                    # No frame in ~10 s — the worker is likely stuck or the
+                    # robot camera isn't responding. Close the stream so the
+                    # browser's <img> onError fires and the UI can recover.
+                    return
+
+                await asyncio.sleep(_MJPEG_POLL_INTERVAL_S)
+        except asyncio.CancelledError:
+            # Client closed the connection; let it propagate so the response
+            # is cleanly torn down.
+            raise
+
+    return StreamingResponse(
+        stream_generator(),
+        media_type=f"multipart/x-mixed-replace; boundary={_MJPEG_BOUNDARY}",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            # MJPEG is not a download; prevent caches from interfering.
+            "X-Accel-Buffering": "no",
         },
     )

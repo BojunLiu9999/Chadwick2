@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from models.database import init_db
-from routers import auth, camera, robot, session, telemetry
+from routers import auth, camera, robot, session, telemetry, voice
 
 
 @asynccontextmanager
@@ -18,7 +18,10 @@ async def lifespan(app: FastAPI):
     print(f"[startup] robot mode: {settings.ROBOT_MODE}")
     robot.start_teleop_watchdog()
     print(f"[startup] teleop watchdog armed (timeout {robot.TELEOP_TIMEOUT_S * 1000:.0f}ms)")
+    telemetry.start_telemetry_logger()
+    print("[startup] telemetry logger armed (1 Hz samples + threshold events)")
     yield
+    await telemetry.stop_telemetry_logger()
     await robot.stop_teleop_watchdog()
     print("[shutdown] service closed")
 
@@ -43,6 +46,7 @@ app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
 app.include_router(robot.router, prefix="/api/robot", tags=["Robot Control"])
 app.include_router(session.router, prefix="/api/session", tags=["Session Management"])
 app.include_router(telemetry.router, prefix="/api", tags=["Telemetry"])
+app.include_router(voice.router, prefix="/api", tags=["Voice"])
 
 
 @app.get("/")

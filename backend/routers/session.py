@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import LogEntry, Session as RobotSession, User, get_db
+from models.database import LogEntry, Session as RobotSession, TelemetrySample, User, get_db
 from models.schemas import LogEntryOut, SessionStartRequest, SessionTagRequest
 from routers.auth import get_current_user
 from services import robot as mock_robot
@@ -279,3 +279,61 @@ async def export_session(
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={session_id}.csv"},
     )
+
+
+@router.get("/{session_id}/telemetry")
+async def get_session_telemetry(
+    session_id: str,
+    format: str = "json",
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    result = await db.execute(
+        select(TelemetrySample)
+        .where(TelemetrySample.session_id == session_id)
+        .order_by(TelemetrySample.timestamp.asc())
+    )
+    samples = result.scalars().all()
+
+    if format == "csv":
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow([
+            "Timestamp",
+            "Session ID",
+            "Tilt (deg)",
+            "Max Motor Load (%)",
+            "Core Temp (C)",
+            "Battery (%)",
+            "Latency (ms)",
+        ])
+        for s in samples:
+            writer.writerow([
+                s.timestamp.isoformat(),
+                s.session_id,
+                s.tilt_deg if s.tilt_deg is not None else "",
+                s.motor_load_pct if s.motor_load_pct is not None else "",
+                s.core_temp_c if s.core_temp_c is not None else "",
+                s.battery_pct if s.battery_pct is not None else "",
+                s.latency_ms if s.latency_ms is not None else "",
+            ])
+        output.seek(0)
+        return StreamingResponse(
+            io.BytesIO(output.getvalue().encode()),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f"attachment; filename={session_id}-telemetry.csv"
+            },
+        )
+
+    return [
+        {
+            "timestamp": s.timestamp.isoformat(),
+            "tilt_deg": s.tilt_deg,
+            "motor_load_pct": s.motor_load_pct,
+            "core_temp_c": s.core_temp_c,
+            "battery_pct": s.battery_pct,
+            "latency_ms": s.latency_ms,
+        }
+        for s in samples
+    ]

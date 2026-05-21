@@ -34,13 +34,15 @@ function formatCameraError(error) {
 export function useCameraFeed() {
   const [camera, setCamera] = useState(DEFAULT_CAMERA)
   const [mediaStream, setMediaStream] = useState(null)
+  // frameUrl is now the MJPEG stream URL for unitree_sdk mode, or empty
+  // for browser/video modes that don't use <img src=…>. No blob churn, no
+  // setInterval polling — the browser handles multipart/x-mixed-replace
+  // natively, decoding each JPEG part as it arrives on the single open
+  // connection.
   const [frameUrl, setFrameUrl] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const streamRef = useRef(null)
-  const frameUrlRef = useRef('')
-  const pollRef = useRef(null)
-  const isFetchingFrameRef = useRef(false)
 
   const releaseCurrentStream = useCallback(() => {
     stopMediaStream(streamRef.current)
@@ -48,54 +50,18 @@ export function useCameraFeed() {
     setMediaStream(null)
   }, [])
 
-  const releaseCurrentFrame = useCallback(() => {
-    if (frameUrlRef.current) {
-      URL.revokeObjectURL(frameUrlRef.current)
-      frameUrlRef.current = ''
-    }
-    setFrameUrl('')
-  }, [])
-
-  const stopFramePolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-  }, [])
-
-  const loadUnitreeFrame = useCallback(async ({ surfaceErrors = false } = {}) => {
-    if (isFetchingFrameRef.current) {
-      return
-    }
-
-    isFetchingFrameRef.current = true
-
-    try {
-      const frameBlob = await cameraAPI.getFrame()
-      const nextFrameUrl = URL.createObjectURL(frameBlob)
-
-      if (frameUrlRef.current) {
-        URL.revokeObjectURL(frameUrlRef.current)
-      }
-
-      frameUrlRef.current = nextFrameUrl
-      setFrameUrl(nextFrameUrl)
-      setError('')
-    } catch (cameraError) {
-      if (surfaceErrors || !frameUrlRef.current) {
-        setError(formatCameraError(cameraError))
-      }
-    } finally {
-      isFetchingFrameRef.current = false
-    }
+  const buildMjpegUrl = useCallback(() => {
+    const token = localStorage.getItem('chadwick_token') || ''
+    // Token has to go in the query string — <img> can't carry an
+    // Authorization header. The backend documents the same trade-off.
+    return `/api/camera/stream.mjpg?token=${encodeURIComponent(token)}`
   }, [])
 
   const refresh = useCallback(async () => {
     setLoading(true)
     setError('')
-    stopFramePolling()
     releaseCurrentStream()
-    releaseCurrentFrame()
+    setFrameUrl('')
 
     try {
       const status = await cameraAPI.getStatus()
@@ -120,41 +86,25 @@ export function useCameraFeed() {
         streamRef.current = stream
         setMediaStream(stream)
       } else if (status.mode === 'unitree_sdk') {
-        await loadUnitreeFrame({ surfaceErrors: true })
+        // Point the <img> at the long-lived multipart stream. The browser
+        // opens one HTTP request and decodes frames inline as they arrive.
+        setFrameUrl(buildMjpegUrl())
       }
     } catch (cameraError) {
       setError(formatCameraError(cameraError))
     } finally {
       setLoading(false)
     }
-  }, [loadUnitreeFrame, releaseCurrentFrame, releaseCurrentStream, stopFramePolling])
+  }, [buildMjpegUrl, releaseCurrentStream])
 
   useEffect(() => {
     refresh()
 
     return () => {
-      stopFramePolling()
       releaseCurrentStream()
-      releaseCurrentFrame()
+      setFrameUrl('')
     }
-  }, [refresh, releaseCurrentFrame, releaseCurrentStream, stopFramePolling])
-
-  useEffect(() => {
-    if (camera.mode !== 'unitree_sdk' || !camera.enabled) {
-      return undefined
-    }
-
-    const fps = Math.max(1, Math.min(Number(camera.fps) || 1, 4))
-    const intervalMs = Math.max(250, Math.round(1000 / fps))
-
-    pollRef.current = setInterval(() => {
-      loadUnitreeFrame({ surfaceErrors: false })
-    }, intervalMs)
-
-    return () => {
-      stopFramePolling()
-    }
-  }, [camera.enabled, camera.fps, camera.mode, loadUnitreeFrame, stopFramePolling])
+  }, [refresh, releaseCurrentStream])
 
   return {
     camera,

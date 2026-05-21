@@ -4,7 +4,7 @@
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, Boolean, Index
 from datetime import datetime
 
 from config import settings
@@ -50,6 +50,23 @@ class LogEntry(Base):
     entry_type   = Column(String(10))   # CMD / INFO / WARN / ERR / TAG
     event        = Column(String(100))
     detail       = Column(Text, nullable=True)
+
+
+class TelemetrySample(Base):
+    """Dense telemetry samples (~1 Hz) for post-session review."""
+    __tablename__ = "telemetry_samples"
+    id              = Column(Integer, primary_key=True)
+    session_id      = Column(String(20), index=True, nullable=False)
+    timestamp       = Column(DateTime, default=datetime.utcnow, index=True, nullable=False)
+    tilt_deg        = Column(Float, nullable=True)
+    motor_load_pct  = Column(Float, nullable=True)
+    core_temp_c     = Column(Float, nullable=True)
+    battery_pct     = Column(Float, nullable=True)
+    latency_ms      = Column(Float, nullable=True)
+
+    __table_args__ = (
+        Index("ix_telemetry_session_ts", "session_id", "timestamp"),
+    )
 
 
 class SafetyConfig(Base):

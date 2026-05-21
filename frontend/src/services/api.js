@@ -44,7 +44,6 @@ export const robotAPI = {
   playAudio: () => http.post('/robot/audio'),
   runHighLevel: command => http.post(`/robot/high-level/${command}`),
   runLoco: command => http.post(`/robot/loco/${command}`),
-  chat: message => http.post('/robot/chat', { message }),
 }
 
 export const cameraAPI = {
@@ -61,4 +60,6 @@ export const sessionAPI = {
   getLogs: sessionId => http.get('/session/logs', { params: { session_id: sessionId } }),
   exportCSV: sessionId => `${BASE_URL}/session/${sessionId}/export?format=csv`,
   exportJSON: sessionId => `${BASE_URL}/session/${sessionId}/export?format=json`,
+  getTelemetry: sessionId => http.get(`/session/${sessionId}/telemetry`),
+  exportTelemetryCSV: sessionId => `${BASE_URL}/session/${sessionId}/telemetry?format=csv`,
 }

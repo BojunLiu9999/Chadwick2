@@ -15,6 +15,7 @@ Real robot bridge using Unitree SDK2 Python.
   estop/release_estop, set_armed, apply_safety_config
 """
 import asyncio
+import math
 import threading
 import time
 from datetime import datetime
@@ -289,16 +290,22 @@ class RealRobotBridge:
         """从 LowState 翻译成前端能认的格式（字段名跟 mock 完全一致）。"""
         with self._state_lock:
             s = self._low_state
+            recv_at = self._low_state_recv_at
+
+        # Age of the last DDS frame, in ms. This is the only "latency" the SDK
+        # actually gives us — round-trip RTT is not exposed.
+        latency_ms = None
+        if recv_at is not None:
+            latency_ms = round((time.monotonic() - recv_at) * 1000)
 
         if s is None:
-            # 还没收到状态，返回安全默认值
             return {
                 "timestamp":     f"{datetime.utcnow().isoformat()}Z",
-                "battery_pct":   0,
-                "imu_tilt_deg":  0,
-                "latency_ms":    0,
-                "core_temp_c":   0,
-                "signal_dbm":    0,
+                "battery_pct":   None,
+                "imu_tilt_deg":  None,
+                "latency_ms":    latency_ms,
+                "core_temp_c":   None,
+                "signal_dbm":    None,
                 "motor_loads":   {"L_HIP": 0, "R_HIP": 0, "L_KNEE": 0, "R_KNEE": 0,
                                   "L_ANKLE": 0, "R_ANKLE": 0},
                 "estop_active":  self.estop_active,
@@ -307,35 +314,40 @@ class RealRobotBridge:
                 "system_status": self._get_system_status(),
             }
 
-        # G1 23DoF 关节索引（从官方 G1JointIndex 推导，可能要按实测调整）
-        # 参考: https://support.unitree.com/home/en/G1_developer/about_G1
-        # left_hip_pitch=0, left_knee=3, left_ankle_pitch=4
-        # right_hip_pitch=6, right_knee=9, right_ankle_pitch=10
+        # Tilt from vertical: sqrt(roll^2 + pitch^2). rpy[0]=roll, rpy[1]=pitch.
+        # Using the magnitude catches sideways lean too, not just forward/back.
         try:
-            tilt = abs(s.imu_state.rpy[1]) * 57.2958  # rad → deg
+            roll = s.imu_state.rpy[0]
+            pitch = s.imu_state.rpy[1]
+            tilt = math.degrees(math.sqrt(roll * roll + pitch * pitch))
         except Exception:
             tilt = 0.0
 
+        # G1 23DoF joint indices: hip_pitch L=0/R=6, knee L=3/R=9,
+        # ankle_pitch L=4/R=10. Hip/knee are ~88 Nm joints; ankle is ~50 Nm.
+        joint_specs = [
+            ("L_HIP",   0,  88.0),
+            ("R_HIP",   6,  88.0),
+            ("L_KNEE",  3,  88.0),
+            ("R_KNEE",  9,  88.0),
+            ("L_ANKLE", 4,  50.0),
+            ("R_ANKLE", 10, 50.0),
+        ]
         try:
             motor_loads = {
-                "L_HIP":   self._motor_load_pct(s, 0),
-                "R_HIP":   self._motor_load_pct(s, 6),
-                "L_KNEE":  self._motor_load_pct(s, 3),
-                "R_KNEE":  self._motor_load_pct(s, 9),
-                "L_ANKLE": self._motor_load_pct(s, 4),
-                "R_ANKLE": self._motor_load_pct(s, 10),
+                name: self._motor_load_pct(s, idx, max_tau)
+                for name, idx, max_tau in joint_specs
             }
         except Exception:
-            motor_loads = {"L_HIP": 0, "R_HIP": 0, "L_KNEE": 0,
-                           "R_KNEE": 0, "L_ANKLE": 0, "R_ANKLE": 0}
+            motor_loads = {name: 0 for name, _, _ in joint_specs}
 
         return {
             "timestamp":     f"{datetime.utcnow().isoformat()}Z",
             "battery_pct":   self._read_battery(),
             "imu_tilt_deg":  round(tilt, 2),
-            "latency_ms":    20,   # SDK 没有直接给延迟，先固定
+            "latency_ms":    latency_ms,
             "core_temp_c":   self._read_max_temp(s),
-            "signal_dbm":    -60,  # 仿真器没有，先固定
+            "signal_dbm":    None,
             "motor_loads":   motor_loads,
             "estop_active":  self.estop_active,
             "motion_armed":  self.motion_armed,
@@ -365,12 +377,10 @@ class RealRobotBridge:
         except (TypeError, ValueError, IndexError, AttributeError):
             return 0.0
 
-    def _motor_load_pct(self, s, idx: int) -> int:
-        """把电机扭矩估值换算成百分比（max_torque_pct 配置作为分母）。"""
+    def _motor_load_pct(self, s, idx: int, max_tau: float = 88.0) -> int:
+        """Estimate per-joint load as tau_est / max_tau * 100, clamped 0-100."""
         try:
             tau = abs(s.motor_state[idx].tau_est)
-            # G1 髋/膝最大扭矩约 88 Nm，踝约 50 Nm；这里用粗略上限
-            max_tau = 88.0
             pct = round(tau / max_tau * 100)
             return max(0, min(100, pct))
         except Exception:

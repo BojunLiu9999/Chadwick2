@@ -76,7 +76,21 @@ The wrong form once severed `/api/robot/{connect,arm,estop,…}` from the real b
 
 ### Telemetry stream
 
-`routers/telemetry.py` pushes at 1 Hz over `/api/ws/telemetry` (JWT-auth). Values come from the in-process bridge's `_low_state` cache. Fields: IMU tilt (from `imu_state.rpy[1]`), per-leg motor load %, max motor temp, battery (placeholder voltage-to-percent), plus placeholder latency/signal/status pill.
+`routers/telemetry.py` pushes at 1 Hz over `/api/ws/telemetry` (JWT-auth). Values come from the in-process bridge's `_low_state` and `_bms_state` caches. Per-field sources in real mode:
+
+- **IMU tilt** — `degrees(sqrt(roll² + pitch²))` from `imu_state.rpy[0..1]`. Magnitude of tilt from vertical (catches sideways lean, not just forward/back pitch).
+- **Per-leg motor load %** — `tau_est / max_tau` per joint. Hip/knee divide by 88 Nm, ankle by 50 Nm (joint indices: hip_pitch L=0/R=6, knee L=3/R=9, ankle_pitch L=4/R=10 — adjust per measured IDL).
+- **Core temp** — `max()` across all 23 motors' `[coil, MOS]` temperatures from `motor_state`. Effectively "hottest motor", not a CPU temp.
+- **Battery %** — `int(bms.soc)` from the `rt/bmsstate` subscription. Returns `None` until the first BMS frame arrives; the UI renders `None` as `--`.
+- **Latency** — age of the last `rt/lowstate` frame in ms (`now - _low_state_recv_at`), not round-trip RTT. The SDK doesn't expose RTT.
+- **Signal dBm** — `None`. The G1 SDK's LowState IDL doesn't carry WiFi RSSI; the field is intentionally absent rather than faked.
+
+A background **telemetry logger** task (started from `main.py` lifespan; lives in `routers/telemetry.py`) consumes the same `get_telemetry()` at 1 Hz and:
+- writes a `TelemetrySample` row to SQLite when a session is active (fire-and-forget so disk latency can't stall the WS),
+- detects threshold transitions for temp (`temp_warn`/`temp_stop` from `SafetyConfig`), battery (hardcoded 20% / 10%), and DDS frame staleness (>2.5 s),
+- emits a `LogEntry` plus broadcasts an `{ type: "alert", level, event, detail }` frame to all WS clients on each transition.
+
+Session telemetry is queryable at `GET /api/session/{id}/telemetry?format=json|csv`. Frontend renders it in `TelemetryHistoryPanel.jsx` (dependency-free SVG charts) and surfaces alert frames as a toast stack on the operator page.
 
 ## Critical operational gotchas
 
@@ -85,8 +99,7 @@ These are real footguns kept current with the codebase. Re-read before changing 
 - **UI E-Stop is a soft stop** (`LocoClient.Damp()`), and it only reaches the robot if `_loco_client is not None`. Pre-Connect or post-Disconnect, E-Stop is a software flag only — no DDS message goes out. Handheld **L2 + B** is the authoritative emergency stop.
 - **`release_estop()` does not stand the robot up.** After `Damp()` the robot is limp; releasing the e-stop only clears the flag. Operator must follow up with Home Pose / Stand Still.
 - **`Disconnect → Connect` in the same process works** thanks to a try/except around `ChannelFactoryInitialize` for "already initialised". The CycloneDDS subscriber handle still leaks one per cycle — harmless but not a clean teardown.
-- **Telemetry may freeze when sport_mode engages.** Working hypothesis: the G1 throttles/reroutes `rt/lowstate` once the sport service takes over. A planned debug endpoint to expose `_on_low_state` callback count + last-receive timestamp is not yet implemented.
-- **Battery % is a placeholder** — `power_v * 100 / 60`. Real BMS state is on `rt/bmsstate` (separate IDL); not subscribed yet.
+- **Telemetry may freeze when sport_mode engages.** Working hypothesis: the G1 throttles/reroutes `rt/lowstate` once the sport service takes over. `GET /api/robot/_debug/dds` exposes the `_on_low_state` callback count + last-receive timestamp for diagnosis. The telemetry logger also emits a `TELEMETRY_STALL` alert (level=WARN) when the frame age exceeds 2.5 s, and a `TELEMETRY_OK` recovery event when it returns.
 - **Safety config is partially enforced.** `max_speed`/`turn_rate` are read by `_execute_sync` in the in-process bridge, but the loco subprocess script reads its own constants — supervisor edits don't propagate to subprocess teleop.
 - **`backend/routers/robotttt.py` is dead.** Not registered in `main.py`; scheduled for removal — don't add to it.
 

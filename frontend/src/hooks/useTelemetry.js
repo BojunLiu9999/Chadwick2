@@ -44,10 +44,13 @@ function normalizeTelemetry(payload = {}) {
   return merged
 }
 
+const MAX_ALERTS = 20
+
 export function useTelemetry() {
   const [telemetry, setTelemetry] = useState(DEFAULT_TELEMETRY)
   const [connected, setConnected] = useState(false)
   const [lastError, setLastError] = useState('')
+  const [alerts, setAlerts] = useState([])
   const wsRef = useRef(null)
   const retryTimerRef = useRef(null)
 
@@ -84,6 +87,21 @@ export function useTelemetry() {
 
         if (message.type === 'telemetry') {
           setTelemetry(normalizeTelemetry(message.data))
+        } else if (message.type === 'alert') {
+          setAlerts(prev => {
+            const next = [
+              {
+                id: `${message.event}-${message.timestamp}`,
+                level: message.level,
+                event: message.event,
+                detail: message.detail,
+                timestamp: message.timestamp,
+                sessionId: message.session_id,
+              },
+              ...prev,
+            ]
+            return next.slice(0, MAX_ALERTS)
+          })
         }
       }
 
@@ -111,5 +129,8 @@ export function useTelemetry() {
     }
   }, [])
 
-  return { telemetry, connected, lastError }
+  const dismissAlert = id => setAlerts(prev => prev.filter(a => a.id !== id))
+  const clearAlerts = () => setAlerts([])
+
+  return { telemetry, connected, lastError, alerts, dismissAlert, clearAlerts }
 }

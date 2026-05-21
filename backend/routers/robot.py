@@ -13,14 +13,11 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from pydantic import BaseModel, Field
-
 from config import settings
 from models.database import LogEntry, User, get_db
 from models.schemas import RobotCommand, RobotStatus, SafetyConfigUpdate
 from routers.auth import get_current_user, require_supervisor
 from services import robot as mock_robot
-from services.llm import chat_and_tts
 
 router = APIRouter()
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
@@ -91,7 +88,7 @@ MOTION_COMMANDS = {
     "MOVE_LEFT",
     "MOVE_RIGHT",
 }
-TELEOP_TIMEOUT_S = 2.0
+TELEOP_TIMEOUT_S = 1.0
 _TELEOP_WATCHDOG_TICK_S = 0.2
 
 # time.monotonic() of the last accepted motion command. 0.0 == idle (watchdog
@@ -416,52 +413,6 @@ async def get_safety_config(
             "active_zone": "LAB G12",
         }
     return config
-    
-class ChatRequest(BaseModel):
-    message: str = Field(..., min_length=1, max_length=500)
-
-
-@router.post("/chat")
-async def chat_with_robot(
-    req: ChatRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    if not mock_robot.is_connected:
-        raise HTTPException(status_code=409, detail="Robot is not connected")
-
-    try:
-        result = await chat_and_tts(req.message)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"LLM/TTS failed: {exc}") from exc
-
-    try:
-        await mock_robot.say(result.pcm_16k_mono)
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Speaker playback failed: {exc}") from exc
-
-    try:
-        db.add(LogEntry(
-            session_id=mock_robot.current_session_id or "NO_SESSION",
-            operator=current_user.username,
-            entry_type="CMD",
-            event="CHAT",
-            detail=encode_detail({
-                "message": req.message,
-                "reply": result.reply,
-                "pcm_bytes": len(result.pcm_16k_mono),
-            }),
-        ))
-        await db.commit()
-    except Exception as e:
-        import sys
-        print(f"[audit log failed] {e}", file=sys.stderr)
-
-    return {"success": True, "message": req.message, "reply": result.reply}
 
 
 @router.post("/audio")
@@ -500,6 +451,16 @@ async def run_high_level_command(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Pre-flight safety gates — the sidecar would otherwise fire regardless
+    # of UI state. Mirror the in-process bridge's execute_command gates so
+    # /api/robot/high-level/* matches /api/robot/command behavior.
+    if not mock_robot.is_connected:
+        raise HTTPException(status_code=409, detail="Robot is not connected")
+    if mock_robot.estop_active:
+        raise HTTPException(status_code=409, detail="E-Stop is active")
+    if not mock_robot.motion_armed:
+        raise HTTPException(status_code=409, detail="Motion is not armed")
+
     try:
         result = run_robot_script(
             ROBOT_COMMANDS_DIR / "run_arm_action.py",
@@ -575,6 +536,17 @@ async def run_locomotion_command(
             "success": False,
             "error": "Locomotion command not allowed"
         }
+
+    # Pre-flight safety gates. STOP is exempt from the armed check so the
+    # operator can always halt motion; the connect + estop gates apply to
+    # STOP too (STOP on a disconnected robot is a no-op subprocess spawn,
+    # and Damp already halted motion when estop is active).
+    if not mock_robot.is_connected:
+        raise HTTPException(status_code=409, detail="Robot is not connected")
+    if mock_robot.estop_active:
+        raise HTTPException(status_code=409, detail="E-Stop is active")
+    if command != "STOP" and not mock_robot.motion_armed:
+        raise HTTPException(status_code=409, detail="Motion is not armed")
 
     # Refresh the watchdog *before* the (potentially slow) SDK subprocess so
     # repeat-fires from a held button stay coherent even if a previous call
