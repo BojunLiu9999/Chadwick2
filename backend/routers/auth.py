@@ -33,7 +33,7 @@ async def get_current_user(
     """依赖注入：从Token解析当前用户（用于需要登录的接口）"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="无效的凭据，请重新登录",
+        detail="Invalid credentials, please log in again",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
@@ -103,4 +103,4 @@ async def logout():
     登出（前端删除Token即可）
     此接口主要用于记录审计日志
     """
-    return {"message": "已登出"}
+    return {"message": "Logged out"}

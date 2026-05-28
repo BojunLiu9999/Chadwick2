@@ -41,7 +41,7 @@ class Settings(BaseSettings):
 
     # Voice-triggered movement: password gate + unlock timeout + per-step duration.
     # Empty password disables the feature entirely.
-    VOICE_MOVE_PASSWORD: str = "blue thunder"
+    VOICE_MOVE_PASSWORD: str = ""
     VOICE_UNLOCK_TIMEOUT_S: float = 60.0
     VOICE_STEP_SEC: float = 1.0
 
