@@ -58,12 +58,13 @@ def _build_url() -> str:
         raise RuntimeError("AZURE_VOICE_LIVE_ENDPOINT not configured")
 
     parsed = urlparse(base)
-    # APIM exposes the voice-live realtime socket at /openai/realtime under the
-    # configured product path. Tolerate either an endpoint that already includes
-    # the suffix or one that stops at the product root.
+    # APIM exposes the voice-live realtime socket at /realtime under the
+    # configured product path (Azure Voice Live, not Azure OpenAI Realtime —
+    # same wire protocol, different gateway suffix). Tolerate either an
+    # endpoint that already includes the suffix or one that stops at the root.
     path = parsed.path.rstrip("/")
-    if not path.endswith("/openai/realtime"):
-        path = f"{path}/openai/realtime"
+    if not path.endswith("/realtime"):
+        path = f"{path}/realtime"
 
     existing: dict[str, str] = {}
     if parsed.query:
@@ -72,7 +73,7 @@ def _build_url() -> str:
                 k, v = part.split("=", 1)
                 existing[k] = v
     if "api-version" not in existing:
-        existing["api-version"] = "2024-10-01-preview"
+        existing["api-version"] = "2025-05-01-preview"
     if "model" not in existing and settings.AZURE_VOICE_LIVE_MODEL:
         existing["model"] = settings.AZURE_VOICE_LIVE_MODEL
     return urlunparse(parsed._replace(path=path, query=urlencode(existing)))
