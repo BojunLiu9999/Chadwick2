@@ -41,7 +41,9 @@ def resolve_robot_env() -> dict:
 
 
 def resolve_robot_python_bin() -> str:
-    return (settings.ROBOT_PYTHON_BIN or "python3").strip()
+    # Default to the interpreter running this backend so subprocess sidecars
+    # inherit cyclonedds and other deps installed in the same venv.
+    return (settings.ROBOT_PYTHON_BIN or sys.executable).strip()
 
 
 def resolve_robot_iface() -> str:

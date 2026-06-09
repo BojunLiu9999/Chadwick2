@@ -243,7 +243,7 @@ def _check_route_gates() -> Optional[str]:
 
 async def _spawn(script_name: str, *args: str) -> asyncio.subprocess.Process:
     iface = (settings.ROBOT_IFACE or "eth0").strip()
-    python_bin = (settings.ROBOT_PYTHON_BIN or "python3").strip()
+    python_bin = (settings.ROBOT_PYTHON_BIN or sys.executable).strip()
     script = str(ROBOT_COMMANDS_DIR / script_name)
     return await asyncio.create_subprocess_exec(
         python_bin, script, iface, *args,
