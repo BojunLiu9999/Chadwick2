@@ -58,6 +58,13 @@ def _build_url() -> str:
         raise RuntimeError("AZURE_VOICE_LIVE_ENDPOINT not configured")
 
     parsed = urlparse(base)
+    # APIM exposes the voice-live realtime socket at /openai/realtime under the
+    # configured product path. Tolerate either an endpoint that already includes
+    # the suffix or one that stops at the product root.
+    path = parsed.path.rstrip("/")
+    if not path.endswith("/openai/realtime"):
+        path = f"{path}/openai/realtime"
+
     existing: dict[str, str] = {}
     if parsed.query:
         for part in parsed.query.split("&"):
@@ -68,7 +75,7 @@ def _build_url() -> str:
         existing["api-version"] = "2024-10-01-preview"
     if "model" not in existing and settings.AZURE_VOICE_LIVE_MODEL:
         existing["model"] = settings.AZURE_VOICE_LIVE_MODEL
-    return urlunparse(parsed._replace(query=urlencode(existing)))
+    return urlunparse(parsed._replace(path=path, query=urlencode(existing)))
 
 
 class VoiceLiveSession:
@@ -90,9 +97,11 @@ class VoiceLiveSession:
             raise RuntimeError("AZURE_VOICE_LIVE_API_KEY not configured")
 
         url = _build_url()
+        # APIM rejects the `api-key` header on this gateway and only treats
+        # `Ocp-Apim-Subscription-Key` as a recognised subscription key.
         self._ws = await websockets.connect(
             url,
-            extra_headers={"api-key": api_key},
+            extra_headers={"Ocp-Apim-Subscription-Key": api_key},
             max_size=16 * 1024 * 1024,
             ping_interval=20,
             ping_timeout=20,
