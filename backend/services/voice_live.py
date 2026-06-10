@@ -13,13 +13,17 @@ before handing them to the robot speaker.
 """
 import asyncio
 import base64
+import http.client
 import json
+import secrets
+import ssl
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional
 from urllib.parse import urlencode, urlparse, urlunparse
 
 import websockets
 from websockets.client import WebSocketClientProtocol
+from websockets.exceptions import InvalidStatusCode
 
 from config import settings
 
@@ -79,6 +83,37 @@ def _build_url() -> str:
     return urlunparse(parsed._replace(path=path, query=urlencode(existing)))
 
 
+def _reprobe_body(ws_url: str, extra_headers: dict) -> str:
+    """Do a one-shot HTTPS WS-upgrade GET to capture the response body that
+    the websockets library discarded. Best-effort: the reprobe may see a
+    different upstream response than the original call (especially against
+    APIM's intermittent 5xx), but the activityId in the body is still useful
+    for tracing."""
+    try:
+        p = urlparse(ws_url.replace("wss://", "https://", 1).replace("ws://", "http://", 1))
+        nonce = base64.b64encode(secrets.token_bytes(16)).decode()
+        conn = http.client.HTTPSConnection(
+            p.hostname, p.port or 443,
+            context=ssl.create_default_context(), timeout=5,
+        )
+        req_headers = {
+            "Host": p.netloc,
+            "Connection": "Upgrade",
+            "Upgrade": "websocket",
+            "Sec-WebSocket-Version": "13",
+            "Sec-WebSocket-Key": nonce,
+            **extra_headers,
+        }
+        path = p.path + (f"?{p.query}" if p.query else "")
+        conn.request("GET", path, headers=req_headers)
+        resp = conn.getresponse()
+        body = resp.read(1024)
+        conn.close()
+        return f"{resp.status} {resp.reason} {body.decode(errors='replace')[:500]}"
+    except Exception as exc:
+        return f"<reprobe failed: {exc}>"
+
+
 class VoiceLiveSession:
     """One conversation with Azure VoiceLive."""
 
@@ -100,13 +135,24 @@ class VoiceLiveSession:
         url = _build_url()
         # APIM rejects the `api-key` header on this gateway and only treats
         # `Ocp-Apim-Subscription-Key` as a recognised subscription key.
-        self._ws = await websockets.connect(
-            url,
-            extra_headers={"Ocp-Apim-Subscription-Key": api_key},
-            max_size=16 * 1024 * 1024,
-            ping_interval=20,
-            ping_timeout=20,
-        )
+        headers = {"Ocp-Apim-Subscription-Key": api_key}
+        try:
+            self._ws = await websockets.connect(
+                url,
+                extra_headers=headers,
+                max_size=16 * 1024 * 1024,
+                ping_interval=20,
+                ping_timeout=20,
+            )
+        except InvalidStatusCode as exc:
+            # The library raises before reading the body, so APIM's
+            # {statusCode,message,activityId} payload is lost. Reprobe with a
+            # raw WS-upgrade GET and surface the body — activityId is what
+            # the techlab Azure owner needs to trace a failed request.
+            body = await asyncio.to_thread(_reprobe_body, url, headers)
+            raise RuntimeError(
+                f"WS handshake rejected HTTP {exc.status_code}; reprobe body: {body}"
+            ) from exc
 
         wake_word = (settings.AZURE_VOICE_LIVE_WAKE_WORD or "Chadwick").strip()
         await self._send({

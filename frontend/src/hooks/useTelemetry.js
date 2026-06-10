@@ -9,7 +9,6 @@ export const fmt = (v, digits = 0, unit = '') =>
 
 const DEFAULT_TELEMETRY = {
   timestamp: new Date().toISOString(),
-  battery_pct: null,
   imu_tilt_deg: null,
   latency_ms: null,
   core_temp_c: null,

@@ -5,7 +5,6 @@ import { sessionAPI } from '../services/api'
 
 const SERIES = [
   { key: 'core_temp_c', label: 'Temp (°C)', color: '#ff6b5b' },
-  { key: 'battery_pct', label: 'Battery (%)', color: '#5be07a' },
   { key: 'motor_load_pct', label: 'Motor Load (%)', color: '#ffd23f' },
   { key: 'tilt_deg', label: 'Tilt (°)', color: '#5bb8ff' },
 ]

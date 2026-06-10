@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     # wss:// URL from the tutor; the API key goes in .env (gitignored) only.
     AZURE_VOICE_LIVE_ENDPOINT: str = ""
     AZURE_VOICE_LIVE_API_KEY: str = ""
-    AZURE_VOICE_LIVE_MODEL: str = "gpt-4o-realtime-preview"
+    AZURE_VOICE_LIVE_MODEL: str = "gpt-realtime"
     AZURE_VOICE_LIVE_VOICE: str = "alloy"
     AZURE_VOICE_LIVE_WAKE_WORD: str = "Chadwick"
 

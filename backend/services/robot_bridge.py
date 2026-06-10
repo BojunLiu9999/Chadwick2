@@ -216,9 +216,33 @@ class RealRobotBridge:
 
         # 语音客户端（chat/say 用，与 LocoClient 走不同 RPC service）
         try:
+            import sys
             self._audio_client = AudioClient()
             self._audio_client.SetTimeout(10.0)
             self._audio_client.Init()
+            # G1 speaker defaults low (often 0) after power cycle — explicitly
+            # set so robot.say() is audible without a manual app step. The SDK
+            # returns an RPC code; log both call results so a silent speaker
+            # is diagnosable without the robot in hand.
+            try:
+                code_before, vol_before = self._audio_client.GetVolume()
+            except Exception as exc:
+                code_before, vol_before = -1, None
+                print(f"[real_robot] GetVolume() raised: {exc!r}", file=sys.stderr)
+            try:
+                set_code = self._audio_client.SetVolume(85)
+            except Exception as vol_exc:
+                set_code = -1
+                print(f"[real_robot] SetVolume(85) raised: {vol_exc!r}", file=sys.stderr)
+            try:
+                code_after, vol_after = self._audio_client.GetVolume()
+            except Exception:
+                code_after, vol_after = -1, None
+            print(
+                f"[real_robot] AudioClient volume: before={vol_before} "
+                f"set_rpc_code={set_code} after={vol_after}",
+                file=sys.stderr,
+            )
         except Exception as e:
             import sys
             print(f"[real_robot] AudioClient init failed (chat disabled): {e!r}",
@@ -458,7 +482,14 @@ class RealRobotBridge:
 
     # ───────────── 语音 ─────────────
     async def say(self, pcm_16k_mono: bytes) -> str:
-        """Stream 16 kHz mono 16-bit PCM to the robot speaker via AudioClient."""
+        """Stream 16 kHz mono 16-bit PCM to the robot speaker via AudioClient.
+
+        Must be chunked + paced — the SDK example shows that PlayStream with a
+        single large buffer followed by immediate PlayStop silently drops the
+        audio. We match the example: ≤96 kB chunks, sleep each chunk's
+        duration after sending so the device buffer drains before the next,
+        then PlayStop once everything has played out.
+        """
         if self._audio_client is None:
             raise RuntimeError("AudioClient not initialized (robot not connected)")
         if not pcm_16k_mono:
@@ -466,10 +497,39 @@ class RealRobotBridge:
 
         self._tts_index += 1
         stream_id = f"chat-{self._tts_index}"
-        await asyncio.to_thread(
-            self._audio_client.PlayStream, "chadwick", stream_id, pcm_16k_mono,
+
+        CHUNK_BYTES = 96000      # 3 s at 16 kHz mono 16-bit
+        BYTES_PER_SEC = 32000
+
+        def _play_all() -> tuple[int, int]:
+            import sys
+            import time as _time
+            total = len(pcm_16k_mono)
+            offset = 0
+            last_code = 0
+            while offset < total:
+                chunk = pcm_16k_mono[offset:offset + CHUNK_BYTES]
+                code, _ = self._audio_client.PlayStream("chadwick", stream_id, chunk)
+                last_code = code
+                if code != 0:
+                    print(
+                        f"[real_robot] PlayStream chunk failed code={code} "
+                        f"offset={offset} stream_id={stream_id}",
+                        file=sys.stderr,
+                    )
+                    break
+                offset += len(chunk)
+                _time.sleep(len(chunk) / BYTES_PER_SEC)
+            self._audio_client.PlayStop("chadwick")
+            return last_code, offset
+
+        last_code, played = await asyncio.to_thread(_play_all)
+        import sys
+        print(
+            f"[real_robot] PlayStream done stream_id={stream_id} "
+            f"played_bytes={played}/{len(pcm_16k_mono)} last_code={last_code}",
+            file=sys.stderr,
         )
-        await asyncio.to_thread(self._audio_client.PlayStop, "chadwick")
         return stream_id
 
 

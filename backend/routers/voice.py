@@ -66,8 +66,11 @@ ROBOT_COMMANDS_DIR = BACKEND_ROOT / "robot_commands"
 # LLM's tool calling — the LLM is for chat, and the safety gate must live in
 # our code, not in a system prompt the model might rephrase.
 
+# Whisper consistently mishears "Chadwick" as Chetwick/Chatwick/Shadwick/etc.
+# Accept the phonetic family: (c|ch|sh) + vowel(s) + (d|t) + w + vowel(s) + ck.
 _WAKE_WORD_RX = re.compile(
-    r"\b" + re.escape((settings.AZURE_VOICE_LIVE_WAKE_WORD or "Chadwick").lower()) + r"\b"
+    r"\b[cs]h?[aeiou]+[dt]w[aeiou]+ck\b",
+    re.IGNORECASE,
 )
 
 # stop is checked first and on its own — it's the kid-safety override and
@@ -172,6 +175,10 @@ class MoveGate:
     last_activity_ts: float = 0.0
     active_proc: Optional[asyncio.subprocess.Process] = field(default=None, repr=False)
     active_kind: str = ""  # "" | "walk" | "dance"
+    # When a gated command prompts for the password, remember it so a correct
+    # password fires the command without the user re-saying it.
+    pending_intent: str = ""   # "" | "MOVE" | "ROUTINE"
+    pending_target: str = ""   # MOVE_FWD | TURN_LEFT | slow_dance | …
 
     def maybe_autorelock(self) -> bool:
         """Drop to LOCKED if UNLOCKED and idle past the timeout. Returns True if relocked."""
@@ -379,6 +386,47 @@ async def _dispatch_stop(gate: MoveGate) -> tuple[str, dict]:
     return status, detail
 
 
+async def _dispatch_intent(
+    websocket: WebSocket, username: str, gate: MoveGate, intent: str, command: str,
+) -> None:
+    """Run the actual MOVE/ROUTINE side effects: route gates, speak, spawn,
+    audit. Used both for the original direct path and for the queued command
+    that fires after a successful password unlock."""
+    block_reason = _check_route_gates()
+    if block_reason is not None:
+        speak_status = await _speak("Movement is not allowed right now.")
+        detail = {"intent": intent, "target": command, "reason": block_reason, "speaker": speak_status}
+        await websocket.send_json({"type": "voice_event", "event": "VOICE_REFUSED", "detail": detail})
+        await _audit(username, "VOICE_REFUSED", detail)
+        return
+
+    if intent == "MOVE":
+        feedback = {
+            "MOVE_FWD":   "Walking forward.",
+            "MOVE_BACK":  "Walking back.",
+            "TURN_LEFT":  "Turning left.",
+            "TURN_RIGHT": "Turning right.",
+        }[command]
+        speak_status = await _speak(feedback)
+        status, detail = await _dispatch_walk(gate, command)
+        if gate.state == "UNLOCKED":
+            gate.last_activity_ts = time.monotonic()
+        detail["speaker"] = speak_status
+        detail["status"] = status
+        await websocket.send_json({"type": "voice_event", "event": "VOICE_WALK", "detail": detail})
+        await _audit(username, "VOICE_WALK", detail)
+    else:  # ROUTINE
+        intro = _routine_prompt(command) or "Let's go."
+        speak_status = await _speak(intro)
+        status, detail = await _dispatch_routine(gate, command)
+        if gate.state == "UNLOCKED":
+            gate.last_activity_ts = time.monotonic()
+        detail["speaker"] = speak_status
+        detail["status"] = status
+        await websocket.send_json({"type": "voice_event", "event": "VOICE_ROUTINE", "detail": detail})
+        await _audit(username, "VOICE_ROUTINE", detail)
+
+
 # ---------------------------------------------------------------------------
 # Per-utterance gate handler
 # ---------------------------------------------------------------------------
@@ -401,6 +449,9 @@ async def _process_utterance(
 
     # --- STOP — always allowed, even mid-walk, regardless of state.
     if intent == "STOP":
+        # Clear any queued password-pending command — STOP overrides intent.
+        gate.pending_intent = ""
+        gate.pending_target = ""
         status, detail = await _dispatch_stop(gate)
         speak_status = await _speak("Stopped.")
         detail["speaker"] = speak_status
@@ -433,14 +484,31 @@ async def _process_utterance(
         if _transcript_has_password(transcript):
             gate.state = "UNLOCKED"
             gate.last_activity_ts = time.monotonic()
-            speak_status = await _speak("Movement unlocked.")
+            # If a command was queued by the prompt, fire it directly so the
+            # user doesn't have to re-say "move forward". Skip the "Movement
+            # unlocked" preamble — the per-intent feedback below ("Walking
+            # forward.") doubles as confirmation.
+            pending_intent = gate.pending_intent
+            pending_target = gate.pending_target
+            gate.pending_intent = ""
+            gate.pending_target = ""
             await websocket.send_json({
                 "type": "voice_event", "event": "MOVE_UNLOCKED",
-                "detail": {"speaker": speak_status},
+                "detail": {"pending": pending_intent or None},
             })
-            await _audit(username, "VOICE_UNLOCKED", {"speaker": speak_status})
+            await _audit(username, "VOICE_UNLOCKED", {"pending": pending_intent or None})
+            if pending_intent and pending_target:
+                await _dispatch_intent(websocket, username, gate, pending_intent, pending_target)
+            else:
+                speak_status = await _speak("Movement unlocked.")
+                await websocket.send_json({
+                    "type": "voice_event", "event": "MOVE_UNLOCKED",
+                    "detail": {"speaker": speak_status},
+                })
         else:
             gate.state = "LOCKED"
+            gate.pending_intent = ""
+            gate.pending_target = ""
             speak_status = await _speak("Sorry, wrong password.")
             await websocket.send_json({
                 "type": "voice_event", "event": "MOVE_PASSWORD_FAIL",
@@ -459,9 +527,11 @@ async def _process_utterance(
         intent == "ROUTINE" and _routine_requires_password(command)
     )
 
-    # Gated + still LOCKED → prompt for password, don't dispatch.
+    # Gated + still LOCKED → queue the command, prompt for password, don't dispatch.
     if requires_password and gate.state == "LOCKED":
         gate.state = "AWAITING_PASSWORD"
+        gate.pending_intent = intent
+        gate.pending_target = command
         speak_status = await _speak("Please say the password to unlock movement.")
         await websocket.send_json({
             "type": "voice_event", "event": "MOVE_PASSWORD_REQUIRED",
@@ -472,43 +542,8 @@ async def _process_utterance(
         })
         return
 
-    # Either ungated routine, or gated + UNLOCKED. Check route-level gates.
-    block_reason = _check_route_gates()
-    if block_reason is not None:
-        speak_status = await _speak("Movement is not allowed right now.")
-        detail = {"intent": intent, "target": command, "reason": block_reason, "speaker": speak_status}
-        await websocket.send_json({
-            "type": "voice_event", "event": "VOICE_REFUSED", "detail": detail,
-        })
-        await _audit(username, "VOICE_REFUSED", detail)
-        return
-
-    # Dispatch.
-    if intent == "MOVE":
-        feedback = {
-            "MOVE_FWD":   "Walking forward.",
-            "MOVE_BACK":  "Walking back.",
-            "TURN_LEFT":  "Turning left.",
-            "TURN_RIGHT": "Turning right.",
-        }[command]
-        speak_status = await _speak(feedback)
-        status, detail = await _dispatch_walk(gate, command)
-        if requires_password:
-            gate.last_activity_ts = time.monotonic()
-        detail["speaker"] = speak_status
-        detail["status"] = status
-        await websocket.send_json({"type": "voice_event", "event": "VOICE_WALK", "detail": detail})
-        await _audit(username, "VOICE_WALK", detail)
-    else:  # ROUTINE
-        intro = _routine_prompt(command) or "Let's go."
-        speak_status = await _speak(intro)
-        status, detail = await _dispatch_routine(gate, command)
-        if requires_password:
-            gate.last_activity_ts = time.monotonic()
-        detail["speaker"] = speak_status
-        detail["status"] = status
-        await websocket.send_json({"type": "voice_event", "event": "VOICE_ROUTINE", "detail": detail})
-        await _audit(username, "VOICE_ROUTINE", detail)
+    # Either ungated routine, or gated + UNLOCKED.
+    await _dispatch_intent(websocket, username, gate, intent, command)
 
 
 @router.websocket("/ws/voice")

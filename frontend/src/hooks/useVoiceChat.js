@@ -11,6 +11,15 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const WS_URL = import.meta.env.VITE_VOICE_WS_URL || 'ws://localhost:8000/api/ws/voice'
 const TARGET_RATE = 24000
 const WORKLET_URL = '/voice-pcm-worklet.js'
+const MIC_LABEL_SUBSTRING = 'JBL'
+
+async function findMicDeviceId(substring) {
+  const devs = await navigator.mediaDevices.enumerateDevices()
+  const match = devs.find(
+    d => d.kind === 'audioinput' && d.label.toLowerCase().includes(substring.toLowerCase())
+  )
+  return match?.deviceId || null
+}
 
 export function useVoiceChat() {
   const [enabled, setEnabled] = useState(false)
@@ -59,10 +68,18 @@ export function useVoiceChat() {
     setError('')
     setStatus('connecting')
 
+    // enumerateDevices() only returns device labels after a mic permission has
+    // been granted, so do a throwaway getUserMedia first to unlock the labels,
+    // then pin to the JBL by deviceId.
     let stream
     try {
+      const probe = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      const targetDeviceId = await findMicDeviceId(MIC_LABEL_SUBSTRING)
+      probe.getTracks().forEach(t => { try { t.stop() } catch (_) {} })
+
       stream = await navigator.mediaDevices.getUserMedia({
         audio: {
+          deviceId: targetDeviceId ? { exact: targetDeviceId } : undefined,
           channelCount: 1,
           echoCancellation: true,
           noiseSuppression: true,
@@ -70,6 +87,12 @@ export function useVoiceChat() {
         },
         video: false,
       })
+      const activeLabel = stream.getAudioTracks()[0]?.label || ''
+      if (!targetDeviceId) {
+        console.warn(`[voice] mic "${MIC_LABEL_SUBSTRING}" not found, falling back to default: ${activeLabel}`)
+      } else {
+        console.info(`[voice] mic pinned: ${activeLabel}`)
+      }
     } catch (e) {
       setError(`Microphone access denied: ${e.message || e}`)
       setStatus('error')

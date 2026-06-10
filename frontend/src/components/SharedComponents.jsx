@@ -9,7 +9,6 @@ import { formatLogTime } from '../utils/sessionLogs'
 const ALERT_RULES = {
   core_temp_c: { warning: 60, critical: 70 },
   signal_dbm: { warning: -75 },
-  battery_pct: { warning: 20, critical: 10 },
   motor_load: { warning: 65, critical: 80 },
 }
 
@@ -47,15 +46,6 @@ function getMetricLevel(key, value) {
 
   if (key === 'signal_dbm') {
     if (value <= ALERT_RULES.signal_dbm.warning) {
-      return 'warning'
-    }
-  }
-
-  if (key === 'battery_pct') {
-    if (value <= ALERT_RULES.battery_pct.critical) {
-      return 'critical'
-    }
-    if (value <= ALERT_RULES.battery_pct.warning) {
       return 'warning'
     }
   }
@@ -99,16 +89,6 @@ function buildTelemetryAlerts(telemetry = {}, wsConnected = false, lastError = '
       level: signalLevel,
       label: 'Signal weak',
       message: `${(telemetry.signal_dbm ?? 0).toFixed(0)} dBm`,
-    })
-  }
-
-  const batteryLevel = getMetricLevel('battery_pct', telemetry.battery_pct)
-  if (batteryLevel !== 'normal') {
-    alerts.push({
-      key: 'battery',
-      level: batteryLevel,
-      label: batteryLevel === 'critical' ? 'Battery critical' : 'Battery low',
-      message: `${(telemetry.battery_pct ?? 0).toFixed(0)}% remaining`,
     })
   }
 
@@ -718,7 +698,6 @@ export function TelemetryPanel({
     [telemetry, connected, lastError],
   )
   const statusMeta = getSystemStatusMeta(telemetry?.system_status, connected, lastError)
-  const batteryLevel = getMetricLevel('battery_pct', telemetry?.battery_pct)
 
   const metricCards = [
     {
@@ -809,37 +788,6 @@ export function TelemetryPanel({
             No abnormal telemetry alerts.
           </div>
         )}
-
-        <SectionLabel>Battery</SectionLabel>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 14 }}>
-          <div style={{ flex: 1, height: 18, background: 'var(--border)', borderRadius: 4, overflow: 'hidden' }}>
-            <div
-              style={{
-                height: '100%',
-                borderRadius: 4,
-                width: telemetry?.battery_pct == null
-                  ? '0%'
-                  : `${Math.max(0, Math.min(100, telemetry.battery_pct))}%`,
-                background: batteryLevel === 'critical'
-                  ? 'linear-gradient(90deg, #a80000, var(--danger))'
-                  : batteryLevel === 'warning'
-                    ? 'linear-gradient(90deg, #7a5200, var(--warn))'
-                    : 'linear-gradient(90deg, var(--accent2), #00ffc8)',
-                transition: 'width 0.5s',
-              }}
-            />
-          </div>
-          <span
-            style={{
-              fontFamily: 'Share Tech Mono, monospace',
-              color: batteryLevel === 'normal' ? 'var(--accent2)' : alertAccent(batteryLevel),
-              fontSize: 12,
-              width: 36,
-            }}
-          >
-            {fmt(telemetry?.battery_pct, 0, '%')}
-          </span>
-        </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
           {metricCards.map(card => (
